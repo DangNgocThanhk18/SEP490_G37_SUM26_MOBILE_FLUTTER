@@ -21,6 +21,9 @@ class ComicDetailScreen extends StatefulWidget {
 
 class _ComicDetailScreenState extends State<ComicDetailScreen> {
   late Future<_ComicDetailData> _futureData;
+  bool _isSaved = false;
+  bool _isLiked = false;
+  bool _actionBusy = false;
 
   @override
   void initState() {
@@ -32,10 +35,57 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
     final results = await Future.wait([
       widget.apiClient.getComicDetail(widget.comic.id),
       widget.apiClient.getChapters(widget.comic.id),
+      if (widget.apiClient.hasToken)
+        widget.apiClient.getReadChapterIds(widget.comic.id)
+      else
+        Future.value(const <String>{}),
+      if (widget.apiClient.hasToken)
+        widget.apiClient.checkSaved(widget.comic.id)
+      else
+        Future.value(false),
+      if (widget.apiClient.hasToken)
+        widget.apiClient.checkLiked(widget.comic.id)
+      else
+        Future.value(false),
     ]);
+    _isSaved = results[3] as bool;
+    _isLiked = results[4] as bool;
     return _ComicDetailData(
       comic: results[0] as Comic,
       chapters: results[1] as List<ChapterLite>,
+      readChapterIds: results[2] as Set<String>,
+    );
+  }
+
+  Future<void> _toggleSaved() async {
+    if (_actionBusy) return;
+    setState(() => _actionBusy = true);
+    try {
+      final value = await widget.apiClient.toggleSaved(widget.comic.id);
+      if (mounted) setState(() => _isSaved = value);
+    } catch (error) {
+      if (mounted) _showError(error);
+    } finally {
+      if (mounted) setState(() => _actionBusy = false);
+    }
+  }
+
+  Future<void> _toggleLiked() async {
+    if (_actionBusy) return;
+    setState(() => _actionBusy = true);
+    try {
+      final value = await widget.apiClient.toggleLiked(widget.comic.id);
+      if (mounted) setState(() => _isLiked = value);
+    } catch (error) {
+      if (mounted) _showError(error);
+    } finally {
+      if (mounted) setState(() => _actionBusy = false);
+    }
+  }
+
+  void _showError(Object error) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(error.toString())),
     );
   }
 
@@ -48,6 +98,9 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
           final fallbackComic = widget.comic;
           final comic = snapshot.data?.comic ?? fallbackComic;
           final chapters = snapshot.data?.chapters ?? const <ChapterLite>[];
+          final readChapterIds =
+              snapshot.data?.readChapterIds ?? const <String>{};
+          final scheme = Theme.of(context).colorScheme;
 
           return CustomScrollView(
             slivers: [
@@ -79,12 +132,42 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                         ],
                       ),
                       const SizedBox(height: 18),
+                      if (widget.apiClient.hasToken) ...[
+                        Row(
+                          children: [
+                            Expanded(
+                              child: FilledButton.tonalIcon(
+                                onPressed: _actionBusy ? null : _toggleSaved,
+                                icon: Icon(
+                                  _isSaved
+                                      ? Icons.bookmark_rounded
+                                      : Icons.bookmark_outline_rounded,
+                                ),
+                                label: Text(_isSaved ? 'Saved' : 'Save'),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: FilledButton.tonalIcon(
+                                onPressed: _actionBusy ? null : _toggleLiked,
+                                icon: Icon(
+                                  _isLiked
+                                      ? Icons.favorite_rounded
+                                      : Icons.favorite_outline_rounded,
+                                ),
+                                label: Text(_isLiked ? 'Liked' : 'Like'),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 18),
+                      ],
                       Text(
                         comic.summary?.trim().isNotEmpty == true
                             ? comic.summary!
                             : 'No synopsis yet.',
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.72),
+                          color: scheme.onSurfaceVariant,
                           height: 1.5,
                         ),
                       ),
@@ -114,9 +197,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                           padding: const EdgeInsets.only(top: 18),
                           child: Text(
                             'No published chapters yet.',
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.56),
-                            ),
+                            style: TextStyle(color: scheme.onSurfaceVariant),
                           ),
                         )
                       else
@@ -128,29 +209,41 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                           separatorBuilder: (_, __) => const SizedBox(height: 8),
                           itemBuilder: (context, index) {
                             final chapter = chapters[index];
+                            final hasBeenRead =
+                                readChapterIds.contains(chapter.id);
                             return ListTile(
-                              tileColor: const Color(0xFF12101B),
+                              tileColor: scheme.surfaceContainerLow,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(14),
-                                side: const BorderSide(color: Colors.white10),
+                                side: BorderSide(color: scheme.outlineVariant),
                               ),
                               title: Text(chapter.title),
                               subtitle: Text(
                                 'Chapter ${chapter.chapterNumber}'
                                 '${chapter.viewCount == null ? '' : ' - ${chapter.viewCount} views'}',
                               ),
+                              leading: hasBeenRead
+                                  ? Icon(
+                                      Icons.check_circle_rounded,
+                                      color: scheme.primary,
+                                    )
+                                  : null,
                               trailing: chapter.isPremium
                                   ? const Icon(Icons.workspace_premium_rounded)
                                   : const Icon(Icons.menu_book_rounded),
-                              onTap: () {
-                                Navigator.of(context).push(
+                              onTap: () async {
+                                await Navigator.of(context).push(
                                   MaterialPageRoute(
                                     builder: (_) => ReaderScreen(
                                       apiClient: widget.apiClient,
-                                      chapter: chapter,
+                                      chapters: chapters,
+                                      initialIndex: index,
                                     ),
                                   ),
                                 );
+                                if (widget.apiClient.hasToken && mounted) {
+                                  setState(() => _futureData = _loadData());
+                                }
                               },
                             );
                           },
@@ -171,10 +264,12 @@ class _ComicDetailData {
   const _ComicDetailData({
     required this.comic,
     required this.chapters,
+    required this.readChapterIds,
   });
 
   final Comic comic;
   final List<ChapterLite> chapters;
+  final Set<String> readChapterIds;
 }
 
 class _HeroCover extends StatelessWidget {
@@ -185,6 +280,7 @@ class _HeroCover extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final imageUrl = comic.imageUrl;
+    final scheme = Theme.of(context).colorScheme;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -192,14 +288,15 @@ class _HeroCover extends StatelessWidget {
           Image.network(
             imageUrl,
             fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(color: const Color(0xFF21182E)),
+            errorBuilder: (_, __, ___) =>
+                Container(color: scheme.surfaceContainerHighest),
           )
         else
-          Container(color: const Color(0xFF21182E)),
+          Container(color: scheme.surfaceContainerHighest),
         Container(
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [Colors.transparent, Color(0xFF080511)],
+              colors: [Colors.transparent, scheme.surface],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
             ),
@@ -217,11 +314,12 @@ class _Pill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFFA855F7).withValues(alpha: 0.12),
-        border: Border.all(color: const Color(0xFFA855F7).withValues(alpha: 0.22)),
+        color: scheme.primaryContainer,
+        border: Border.all(color: scheme.outlineVariant),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(label, style: const TextStyle(fontSize: 12)),

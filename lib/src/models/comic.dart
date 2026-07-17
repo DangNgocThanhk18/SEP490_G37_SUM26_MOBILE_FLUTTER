@@ -10,6 +10,9 @@ class Comic {
     this.latestChapterNumber,
     this.viewCount,
     this.ratingAverage,
+    this.likeCount,
+    this.saveCount,
+    this.chapterCount,
     this.genres = const [],
   });
 
@@ -23,6 +26,9 @@ class Comic {
   final String? latestChapterNumber;
   final int? viewCount;
   final double? ratingAverage;
+  final int? likeCount;
+  final int? saveCount;
+  final int? chapterCount;
   final List<String> genres;
 
   String? get imageUrl {
@@ -42,6 +48,9 @@ class Comic {
       latestChapterNumber: json['latestChapterNumber']?.toString(),
       viewCount: _asInt(json['viewCount']),
       ratingAverage: _asDouble(json['ratingAverage']),
+      likeCount: _asInt(json['likeCount']),
+      saveCount: _asInt(json['saveCount']),
+      chapterCount: _asInt(json['chapterCount']),
       genres: _parseGenres(json['genres']),
     );
   }

@@ -4,6 +4,7 @@ import 'models/user_profile.dart';
 import 'screens/comics_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/api_client.dart';
+import 'theme/app_theme.dart';
 
 class ComiVerseApp extends StatefulWidget {
   const ComiVerseApp({super.key});
@@ -16,6 +17,14 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
   final ApiClient _apiClient = ApiClient();
   UserProfile? _user;
   bool _isGuest = false;
+  ThemeMode _themeMode = ThemeMode.dark;
+
+  void _toggleTheme() {
+    setState(() {
+      _themeMode =
+          _themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
+    });
+  }
 
   void _handleSignedIn(UserProfile user) {
     setState(() {
@@ -44,26 +53,23 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
     return MaterialApp(
       title: 'ComiVerse',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFA855F7),
-          brightness: Brightness.dark,
-        ),
-        scaffoldBackgroundColor: const Color(0xFF080511),
-        fontFamily: 'Roboto',
-      ),
+      theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
+      themeMode: _themeMode,
       home: _apiClient.hasToken || _user != null || _isGuest
           ? ComicsScreen(
               apiClient: _apiClient,
               user: _user,
               onSignOut: _handleSignOut,
+              onToggleTheme: _toggleTheme,
+              isDarkMode: _themeMode == ThemeMode.dark,
             )
           : LoginScreen(
               apiClient: _apiClient,
               onSignedIn: _handleSignedIn,
               onContinueAsGuest: _handleGuestMode,
+              onToggleTheme: _toggleTheme,
+              isDarkMode: _themeMode == ThemeMode.dark,
             ),
     );
   }

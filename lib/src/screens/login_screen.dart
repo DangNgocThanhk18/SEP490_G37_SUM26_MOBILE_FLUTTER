@@ -9,11 +9,15 @@ class LoginScreen extends StatefulWidget {
     required this.apiClient,
     required this.onSignedIn,
     required this.onContinueAsGuest,
+    required this.onToggleTheme,
+    required this.isDarkMode,
   });
 
   final ApiClient apiClient;
   final ValueChanged<UserProfile> onSignedIn;
   final VoidCallback onContinueAsGuest;
+  final VoidCallback onToggleTheme;
+  final bool isDarkMode;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -63,6 +67,19 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        actions: [
+          IconButton(
+            tooltip: widget.isDarkMode ? 'Use light mode' : 'Use dark mode',
+            onPressed: widget.onToggleTheme,
+            icon: Icon(
+              widget.isDarkMode
+                  ? Icons.light_mode_rounded
+                  : Icons.dark_mode_rounded,
+            ),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(24, 38, 24, 24),
@@ -87,7 +104,7 @@ class _LoginScreenState extends State<LoginScreen> {
             Text(
               'Sign in to sync your ComiVerse account, or continue as guest to read public comics.',
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.68),
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
                 height: 1.45,
               ),
             ),
@@ -176,7 +193,7 @@ class _LoginScreenState extends State<LoginScreen> {
               'API: ${widget.apiClient.baseUrl}',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.42),
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
                 fontSize: 12,
               ),
             ),

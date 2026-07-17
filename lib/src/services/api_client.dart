@@ -34,7 +34,7 @@ class ApiClient {
   })  : baseUrl = baseUrl ??
             const String.fromEnvironment(
               'API_BASE_URL',
-              defaultValue: 'http://10.0.2.2:8081/api',
+              defaultValue: 'http://192.168.1.6:8081/api',
             ),
         _timeout = timeout;
 
@@ -92,6 +92,57 @@ class ApiClient {
         .map(Comic.fromJson)
         .where((comic) => comic.id.isNotEmpty)
         .toList();
+  }
+
+  Future<List<Comic>> getLeaderboard({String timeframe = 'day'}) async {
+    final json = await _request(
+      'GET',
+      '/comics/leaderboard?timeframe=${Uri.encodeQueryComponent(timeframe)}',
+      authorized: false,
+    );
+    return _parseComicList(_unwrapData(json));
+  }
+
+  Future<List<Comic>> getSavedComics() async {
+    final json = await _request('GET', '/saves/my-saves');
+    return _parseComicList(_unwrapData(json));
+  }
+
+  Future<List<Comic>> getLikedComics() async {
+    final json = await _request('GET', '/likes/my-likes');
+    return _parseComicList(_unwrapData(json));
+  }
+
+  Future<List<Comic>> getReadingHistory() async {
+    final json = await _request('GET', '/reading-histories/my-history');
+    return _parseComicList(_unwrapData(json));
+  }
+
+  Future<bool> checkSaved(String comicId) async {
+    final json = await _request('GET', '/saves/check/$comicId');
+    return _unwrapData(json) == true;
+  }
+
+  Future<bool> checkLiked(String comicId) async {
+    final json = await _request('GET', '/likes/check/$comicId');
+    return _unwrapData(json) == true;
+  }
+
+  Future<bool> toggleSaved(String comicId) async {
+    final json = await _request('POST', '/saves/toggle/$comicId', body: const {});
+    return _unwrapData(json) == true;
+  }
+
+  Future<bool> toggleLiked(String comicId) async {
+    final json = await _request('POST', '/likes/toggle/$comicId', body: const {});
+    return _unwrapData(json) == true;
+  }
+
+  Future<Set<String>> getReadChapterIds(String comicId) async {
+    final json = await _request('GET', '/reading-histories/chapters/$comicId');
+    final data = _unwrapData(json);
+    if (data is! List) return const {};
+    return data.map((item) => item.toString()).toSet();
   }
 
   Future<Comic> getComicDetail(String id) async {
@@ -180,5 +231,14 @@ class ApiClient {
   Object? _unwrapData(Map<String, dynamic> json) {
     if (json.containsKey('data')) return json['data'];
     return json;
+  }
+
+  List<Comic> _parseComicList(Object? data) {
+    if (data is! List) return const [];
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(Comic.fromJson)
+        .where((comic) => comic.id.isNotEmpty)
+        .toList();
   }
 }
