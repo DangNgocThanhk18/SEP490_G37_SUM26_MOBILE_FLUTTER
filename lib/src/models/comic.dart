@@ -13,6 +13,7 @@ class Comic {
     this.likeCount,
     this.saveCount,
     this.chapterCount,
+    this.lastChapterUpdatedAt,
     this.genres = const [],
   });
 
@@ -29,6 +30,7 @@ class Comic {
   final int? likeCount;
   final int? saveCount;
   final int? chapterCount;
+  final DateTime? lastChapterUpdatedAt;
   final List<String> genres;
 
   String? get imageUrl {
@@ -51,6 +53,9 @@ class Comic {
       likeCount: _asInt(json['likeCount']),
       saveCount: _asInt(json['saveCount']),
       chapterCount: _asInt(json['chapterCount']),
+      lastChapterUpdatedAt: DateTime.tryParse(
+        (json['lastChapterUpdatedAt'] ?? '').toString(),
+      ),
       genres: _parseGenres(json['genres']),
     );
   }

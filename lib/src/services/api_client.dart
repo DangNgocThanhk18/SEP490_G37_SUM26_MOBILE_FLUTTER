@@ -4,6 +4,8 @@ import 'dart:io';
 
 import '../models/chapter.dart';
 import '../models/comic.dart';
+import '../models/app_notification.dart';
+import '../models/premium_plan.dart';
 import '../models/user_profile.dart';
 
 class ApiException implements Exception {
@@ -103,6 +105,30 @@ class ApiClient {
     return _parseComicList(_unwrapData(json));
   }
 
+  Future<List<Comic>> getTopViewed({int size = 10}) async {
+    final json = await _request(
+      'GET',
+      '/comics/top-views?page=1&size=$size',
+      authorized: false,
+    );
+    return _parseComicPayload(_unwrapData(json));
+  }
+
+  Future<List<Comic>> getRecentlyUpdated({int size = 10}) async {
+    final json = await _request(
+      'GET',
+      '/comics/recently-updated?page=1&size=$size',
+      authorized: false,
+    );
+    return _parseComicPayload(_unwrapData(json));
+  }
+
+  Future<List<Comic>> getRecommendations({int size = 10}) async {
+    if (!hasToken) return getTopViewed(size: size);
+    final json = await _request('GET', '/comics/recommendations?size=$size');
+    return _parseComicPayload(_unwrapData(json));
+  }
+
   Future<List<Comic>> getSavedComics() async {
     final json = await _request('GET', '/saves/my-saves');
     return _parseComicList(_unwrapData(json));
@@ -116,6 +142,10 @@ class ApiClient {
   Future<List<Comic>> getReadingHistory() async {
     final json = await _request('GET', '/reading-histories/my-history');
     return _parseComicList(_unwrapData(json));
+  }
+
+  Future<void> deleteReadingHistory(String comicId) async {
+    await _request('DELETE', '/reading-histories/comic/$comicId');
   }
 
   Future<bool> checkSaved(String comicId) async {
@@ -143,6 +173,45 @@ class ApiClient {
     final data = _unwrapData(json);
     if (data is! List) return const {};
     return data.map((item) => item.toString()).toSet();
+  }
+
+  Future<List<AppNotification>> getNotifications() async {
+    final json = await _request('GET', '/notifications');
+    final data = _unwrapData(json);
+    if (data is! List) return const [];
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(AppNotification.fromJson)
+        .where((item) => item.id.isNotEmpty)
+        .toList();
+  }
+
+  Future<void> markNotificationRead(String id) async {
+    await _request('PUT', '/notifications/$id/read');
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    await _request('PUT', '/notifications/read-all');
+  }
+
+  Future<int> getUnreadNotificationCount() async {
+    final json = await _request('GET', '/notifications/unread-count');
+    final value = _unwrapData(json);
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  Future<PremiumPlanSettings> getPremiumPlans() async {
+    final json = await _request('GET', '/plans', authorized: false);
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read premium plan settings.');
+    }
+    return PremiumPlanSettings.fromJson(data);
+  }
+
+  Future<void> upgradePlan(String planType) async {
+    await _request('POST', '/plans/upgrade', body: {'planType': planType});
   }
 
   Future<Comic> getComicDetail(String id) async {
@@ -240,5 +309,13 @@ class ApiClient {
         .map(Comic.fromJson)
         .where((comic) => comic.id.isNotEmpty)
         .toList();
+  }
+
+  List<Comic> _parseComicPayload(Object? data) {
+    if (data is List) return _parseComicList(data);
+    if (data is Map<String, dynamic>) {
+      return _parseComicList(data['data']);
+    }
+    return const [];
   }
 }

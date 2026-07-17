@@ -6,6 +6,7 @@ class ChapterLite {
     required this.title,
     this.viewCount,
     this.isPremium = false,
+    this.createdAt,
   });
 
   final String id;
@@ -14,6 +15,7 @@ class ChapterLite {
   final String title;
   final int? viewCount;
   final bool isPremium;
+  final DateTime? createdAt;
 
   factory ChapterLite.fromJson(Map<String, dynamic> json) {
     final number = (json['chapterNumber'] ?? json['num'] ?? '').toString();
@@ -24,6 +26,7 @@ class ChapterLite {
       title: (json['title'] ?? 'Chapter $number').toString(),
       viewCount: _asInt(json['viewCount']),
       isPremium: json['isPremium'] == true,
+      createdAt: DateTime.tryParse((json['createdAt'] ?? '').toString()),
     );
   }
 

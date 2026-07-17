@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'models/user_profile.dart';
-import 'screens/comics_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/main_shell.dart';
 import 'services/api_client.dart';
 import 'theme/app_theme.dart';
 
@@ -17,12 +17,16 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
   final ApiClient _apiClient = ApiClient();
   UserProfile? _user;
   bool _isGuest = false;
-  ThemeMode _themeMode = ThemeMode.dark;
+  ThemeMode _themeMode = ThemeMode.system;
 
   void _toggleTheme() {
+    final platformBrightness =
+        WidgetsBinding.instance.platformDispatcher.platformBrightness;
+    final isCurrentlyDark = _themeMode == ThemeMode.dark ||
+        (_themeMode == ThemeMode.system &&
+            platformBrightness == Brightness.dark);
     setState(() {
-      _themeMode =
-          _themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
+      _themeMode = isCurrentlyDark ? ThemeMode.light : ThemeMode.dark;
     });
   }
 
@@ -50,6 +54,11 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
 
   @override
   Widget build(BuildContext context) {
+    final platformBrightness =
+        WidgetsBinding.instance.platformDispatcher.platformBrightness;
+    final isDarkMode = _themeMode == ThemeMode.dark ||
+        (_themeMode == ThemeMode.system &&
+            platformBrightness == Brightness.dark);
     return MaterialApp(
       title: 'ComiVerse',
       debugShowCheckedModeBanner: false,
@@ -57,19 +66,19 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
       darkTheme: AppTheme.dark(),
       themeMode: _themeMode,
       home: _apiClient.hasToken || _user != null || _isGuest
-          ? ComicsScreen(
+          ? MainShell(
               apiClient: _apiClient,
               user: _user,
               onSignOut: _handleSignOut,
               onToggleTheme: _toggleTheme,
-              isDarkMode: _themeMode == ThemeMode.dark,
+              isDarkMode: isDarkMode,
             )
           : LoginScreen(
               apiClient: _apiClient,
               onSignedIn: _handleSignedIn,
               onContinueAsGuest: _handleGuestMode,
               onToggleTheme: _toggleTheme,
-              isDarkMode: _themeMode == ThemeMode.dark,
+              isDarkMode: isDarkMode,
             ),
     );
   }

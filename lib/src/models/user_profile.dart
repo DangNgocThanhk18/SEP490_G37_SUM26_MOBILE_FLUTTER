@@ -5,6 +5,10 @@ class UserProfile {
     this.fullName,
     this.role,
     this.avatarUrl,
+    this.backgroundImageUrl,
+    this.premiumPlan,
+    this.premiumExpiresAt,
+    this.premiumActive = false,
   });
 
   final String username;
@@ -12,6 +16,10 @@ class UserProfile {
   final String? fullName;
   final String? role;
   final String? avatarUrl;
+  final String? backgroundImageUrl;
+  final String? premiumPlan;
+  final DateTime? premiumExpiresAt;
+  final bool premiumActive;
 
   String get displayName {
     final cleanFullName = fullName?.trim();
@@ -28,6 +36,12 @@ class UserProfile {
       fullName: json['fullName']?.toString(),
       role: json['role']?.toString(),
       avatarUrl: json['avatarUrl']?.toString(),
+      backgroundImageUrl: json['backgroundImageUrl']?.toString(),
+      premiumPlan: json['premiumPlan']?.toString(),
+      premiumExpiresAt: DateTime.tryParse(
+        (json['premiumExpiresAt'] ?? '').toString(),
+      ),
+      premiumActive: json['premiumActive'] == true,
     );
   }
 }
