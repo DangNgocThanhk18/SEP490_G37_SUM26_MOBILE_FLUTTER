@@ -55,9 +55,9 @@ class ChapterDetail {
     final rawImages = json['images'];
     final images = rawImages is List
         ? rawImages
-            .map((item) => item.toString())
-            .where((url) => url.trim().isNotEmpty)
-            .toList()
+              .map((item) => item.toString())
+              .where((url) => url.trim().isNotEmpty)
+              .toList()
         : <String>[];
 
     return ChapterDetail(

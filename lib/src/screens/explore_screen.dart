@@ -37,7 +37,8 @@ class _ExploreScreenState extends State<ExploreScreen>
   List<Comic> _applyFilters(List<Comic> source) {
     final query = _query.trim().toLowerCase();
     final results = source.where((comic) {
-      final matchesQuery = query.isEmpty ||
+      final matchesQuery =
+          query.isEmpty ||
           comic.title.toLowerCase().contains(query) ||
           (comic.authorName?.toLowerCase().contains(query) ?? false) ||
           comic.genres.any((item) => item.toLowerCase().contains(query));
@@ -64,7 +65,8 @@ class _ExploreScreenState extends State<ExploreScreen>
   }
 
   Future<void> _showFilters(List<Comic> comics) async {
-    final genres = comics.expand((comic) => comic.genres).toSet().toList()..sort();
+    final genres = comics.expand((comic) => comic.genres).toSet().toList()
+      ..sort();
     var genre = _genre;
     var status = _status;
     var sort = _sort;
@@ -81,9 +83,15 @@ class _ExploreScreenState extends State<ExploreScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Filters', style: Theme.of(context).textTheme.headlineSmall),
+                    Text(
+                      'Filters',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
                     const SizedBox(height: 20),
-                    Text('Genre', style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                      'Genre',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -98,12 +106,16 @@ class _ExploreScreenState extends State<ExploreScreen>
                           ChoiceChip(
                             label: Text(item),
                             selected: genre == item,
-                            onSelected: (_) => setModalState(() => genre = item),
+                            onSelected: (_) =>
+                                setModalState(() => genre = item),
                           ),
                       ],
                     ),
                     const SizedBox(height: 20),
-                    Text('Status', style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                      'Status',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -117,7 +129,8 @@ class _ExploreScreenState extends State<ExploreScreen>
                           ChoiceChip(
                             label: Text(item.toLowerCase()),
                             selected: status == item,
-                            onSelected: (_) => setModalState(() => status = item),
+                            onSelected: (_) =>
+                                setModalState(() => status = item),
                           ),
                       ],
                     ),
@@ -126,10 +139,22 @@ class _ExploreScreenState extends State<ExploreScreen>
                       initialValue: sort,
                       decoration: const InputDecoration(labelText: 'Sort by'),
                       items: const [
-                        DropdownMenuItem(value: 'default', child: Text('Default')),
-                        DropdownMenuItem(value: 'rating', child: Text('Top rated')),
-                        DropdownMenuItem(value: 'views', child: Text('Most viewed')),
-                        DropdownMenuItem(value: 'updated', child: Text('Recently updated')),
+                        DropdownMenuItem(
+                          value: 'default',
+                          child: Text('Default'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'rating',
+                          child: Text('Top rated'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'views',
+                          child: Text('Most viewed'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'updated',
+                          child: Text('Recently updated'),
+                        ),
                       ],
                       onChanged: (value) {
                         if (value != null) setModalState(() => sort = value);
@@ -141,7 +166,11 @@ class _ExploreScreenState extends State<ExploreScreen>
                       child: FilledButton(
                         onPressed: () => Navigator.pop(
                           context,
-                          _ExploreFilters(genre: genre, status: status, sort: sort),
+                          _ExploreFilters(
+                            genre: genre,
+                            status: status,
+                            sort: sort,
+                          ),
                         ),
                         child: const Text('Show results'),
                       ),
@@ -166,7 +195,8 @@ class _ExploreScreenState extends State<ExploreScreen>
   void _openComic(Comic comic) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => ComicDetailScreen(apiClient: widget.apiClient, comic: comic),
+        builder: (_) =>
+            ComicDetailScreen(apiClient: widget.apiClient, comic: comic),
       ),
     );
   }
@@ -213,7 +243,8 @@ class _ExploreScreenState extends State<ExploreScreen>
                       children: [
                         Expanded(
                           child: TextField(
-                            onChanged: (value) => setState(() => _query = value),
+                            onChanged: (value) =>
+                                setState(() => _query = value),
                             decoration: const InputDecoration(
                               hintText: 'Search comics, authors, genres...',
                               prefixIcon: Icon(Icons.search_rounded),
@@ -278,7 +309,8 @@ class _ExploreScreenState extends State<ExploreScreen>
                           if (_sort != 'default')
                             InputChip(
                               label: Text(_sort),
-                              onDeleted: () => setState(() => _sort = 'default'),
+                              onDeleted: () =>
+                                  setState(() => _sort = 'default'),
                             ),
                         ],
                       ),
@@ -300,18 +332,19 @@ class _ExploreScreenState extends State<ExploreScreen>
                         final columns = width >= 820
                             ? 5
                             : width >= 600
-                                ? 4
-                                : width >= 430
-                                    ? 3
-                                    : 2;
+                            ? 4
+                            : width >= 430
+                            ? 3
+                            : 2;
                         return SliverGrid.builder(
                           itemCount: comics.length,
-                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: columns,
-                            mainAxisSpacing: 18,
-                            crossAxisSpacing: 14,
-                            childAspectRatio: 0.63,
-                          ),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: columns,
+                                mainAxisSpacing: 18,
+                                crossAxisSpacing: 14,
+                                childAspectRatio: 0.50,
+                              ),
                           itemBuilder: (context, index) {
                             final comic = comics[index];
                             return ComicCoverCard(
@@ -335,7 +368,11 @@ class _ExploreScreenState extends State<ExploreScreen>
 }
 
 class _ExploreFilters {
-  const _ExploreFilters({required this.genre, required this.status, required this.sort});
+  const _ExploreFilters({
+    required this.genre,
+    required this.status,
+    required this.sort,
+  });
 
   final String? genre;
   final String? status;

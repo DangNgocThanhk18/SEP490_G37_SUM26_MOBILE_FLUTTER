@@ -56,7 +56,10 @@ class _RankingScreenState extends State<RankingScreen> {
                   return const Center(child: CircularProgressIndicator());
                 }
                 if (snapshot.hasError) {
-                  return ApiErrorState(error: snapshot.error!, onRetry: _reload);
+                  return ApiErrorState(
+                    error: snapshot.error!,
+                    onRetry: _reload,
+                  );
                 }
                 final comics = snapshot.data ?? const [];
                 if (comics.isEmpty) {
@@ -70,7 +73,7 @@ class _RankingScreenState extends State<RankingScreen> {
                   child: ListView.separated(
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                     itemCount: comics.length,
-                    separatorBuilder: (_, __) => const Divider(),
+                    separatorBuilder: (_, _) => const Divider(),
                     itemBuilder: (context, index) {
                       final comic = comics[index];
                       return ComicListRow(
@@ -79,7 +82,8 @@ class _RankingScreenState extends State<RankingScreen> {
                           width: 32,
                           child: Text(
                             '#${index + 1}',
-                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(
                                   color: index < 3
                                       ? scheme.primary
                                       : scheme.onSurfaceVariant,
@@ -93,7 +97,9 @@ class _RankingScreenState extends State<RankingScreen> {
                               index.isEven
                                   ? Icons.arrow_drop_up_rounded
                                   : Icons.remove_rounded,
-                              color: index.isEven ? Colors.green : scheme.outline,
+                              color: index.isEven
+                                  ? Colors.green
+                                  : scheme.outline,
                             ),
                             if (comic.ratingAverage != null)
                               Text(comic.ratingAverage!.toStringAsFixed(1)),

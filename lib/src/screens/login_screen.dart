@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
+import '../theme/app_theme.dart';
+import '../widgets/common_widgets.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({
@@ -88,9 +90,9 @@ class _LoginScreenState extends State<LoginScreen> {
               width: 64,
               height: 64,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFA855F7), Color(0xFFEC4899)],
+                borderRadius: BorderRadius.circular(8),
+                gradient: LinearGradient(
+                  colors: [AppTheme.brandPurple, context.cvColors.brandPink],
                 ),
               ),
               child: const Icon(Icons.auto_stories_rounded, size: 34),
@@ -162,23 +164,18 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 14),
               Text(
                 _error!,
-                style: const TextStyle(color: Color(0xFFFF9DA8)),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ],
             const SizedBox(height: 28),
-            FilledButton(
-              onPressed: _isLoading ? null : _submit,
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(54),
-                backgroundColor: const Color(0xFFA855F7),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: PrimaryGradientButton(
+                label: 'Sign In',
+                onPressed: _submit,
+                loading: _isLoading,
               ),
-              child: _isLoading
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Sign In'),
             ),
             const SizedBox(height: 12),
             OutlinedButton(

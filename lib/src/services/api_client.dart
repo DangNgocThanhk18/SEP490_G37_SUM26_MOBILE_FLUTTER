@@ -7,6 +7,7 @@ import '../models/comic.dart';
 import '../models/app_notification.dart';
 import '../models/premium_plan.dart';
 import '../models/user_profile.dart';
+import 'session_storage.dart';
 
 class ApiException implements Exception {
   const ApiException(this.message);
@@ -33,24 +34,68 @@ class ApiClient {
   ApiClient({
     String? baseUrl,
     Duration timeout = const Duration(seconds: 20),
-  })  : baseUrl = baseUrl ??
-            const String.fromEnvironment(
-              'API_BASE_URL',
-              defaultValue: 'http://192.168.1.6:8081/api',
-            ),
-        _timeout = timeout;
+    SessionStorage? sessionStorage,
+  }) : baseUrl =
+           baseUrl ??
+           const String.fromEnvironment(
+             'API_BASE_URL',
+             defaultValue: 'http://192.168.1.6:8081/api',
+           ),
+       _timeout = timeout,
+       _sessionStorage = sessionStorage ?? const SecureSessionStorage();
+
+  static const _accessTokenKey = 'comiverse_access_token';
+  static const _refreshTokenKey = 'comiverse_refresh_token';
+  static const _profileKey = 'comiverse_user_profile';
 
   final String baseUrl;
   final Duration _timeout;
+  final SessionStorage _sessionStorage;
   final HttpClient _httpClient = HttpClient();
   String? _token;
   String? _refreshToken;
 
   bool get hasToken => _token != null && _token!.isNotEmpty;
+  String? get refreshToken => _refreshToken;
 
-  void clearSession() {
+  Future<void> clearSession() async {
     _token = null;
     _refreshToken = null;
+    await Future.wait([
+      _sessionStorage.delete(_accessTokenKey),
+      _sessionStorage.delete(_refreshTokenKey),
+      _sessionStorage.delete(_profileKey),
+    ]);
+  }
+
+  Future<UserProfile?> restoreSession() async {
+    try {
+      final values = await Future.wait([
+        _sessionStorage.read(_accessTokenKey),
+        _sessionStorage.read(_refreshTokenKey),
+        _sessionStorage.read(_profileKey),
+      ]);
+      final token = values[0];
+      if (token == null || token.trim().isEmpty) return null;
+
+      _token = token;
+      _refreshToken = values[1];
+      final profileJson = values[2];
+      if (profileJson != null && profileJson.trim().isNotEmpty) {
+        final decoded = jsonDecode(profileJson);
+        if (decoded is Map<String, dynamic>) {
+          return UserProfile.fromJson(decoded);
+        }
+      }
+
+      final user = await getMe();
+      await _sessionStorage.write(_profileKey, jsonEncode(user.toJson()));
+      return user;
+    } catch (_) {
+      _token = null;
+      _refreshToken = null;
+      return null;
+    }
   }
 
   Future<LoginResult> login({
@@ -73,6 +118,11 @@ class ApiClient {
     _token = token;
     _refreshToken = refreshToken;
     final user = await getMe();
+    await Future.wait([
+      _sessionStorage.write(_accessTokenKey, token),
+      _sessionStorage.write(_refreshTokenKey, refreshToken),
+      _sessionStorage.write(_profileKey, jsonEncode(user.toJson())),
+    ]);
     return LoginResult(token: token, refreshToken: refreshToken, user: user);
   }
 
@@ -83,6 +133,17 @@ class ApiClient {
       throw const ApiException('Cannot read profile response.');
     }
     return UserProfile.fromJson(data);
+  }
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await _request(
+      'POST',
+      '/auth/change-password',
+      body: {'currentPassword': currentPassword, 'newPassword': newPassword},
+    );
   }
 
   Future<List<Comic>> getComics() async {
@@ -159,12 +220,20 @@ class ApiClient {
   }
 
   Future<bool> toggleSaved(String comicId) async {
-    final json = await _request('POST', '/saves/toggle/$comicId', body: const {});
+    final json = await _request(
+      'POST',
+      '/saves/toggle/$comicId',
+      body: const {},
+    );
     return _unwrapData(json) == true;
   }
 
   Future<bool> toggleLiked(String comicId) async {
-    final json = await _request('POST', '/likes/toggle/$comicId', body: const {});
+    final json = await _request(
+      'POST',
+      '/likes/toggle/$comicId',
+      body: const {},
+    );
     return _unwrapData(json) == true;
   }
 
@@ -272,12 +341,14 @@ class ApiClient {
 
       final response = await request.close().timeout(_timeout);
       final text = await response.transform(utf8.decoder).join();
-      final decoded = text.trim().isEmpty ? <String, dynamic>{} : jsonDecode(text);
+      final decoded = text.trim().isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(text);
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final message = decoded is Map<String, dynamic>
             ? (decoded['message'] ?? decoded['error'] ?? 'Request failed')
-                .toString()
+                  .toString()
             : 'Request failed';
         throw ApiException(message);
       }

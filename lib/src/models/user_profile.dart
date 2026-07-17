@@ -44,4 +44,18 @@ class UserProfile {
       premiumActive: json['premiumActive'] == true,
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'username': username,
+      'email': email,
+      'fullName': fullName,
+      'role': role,
+      'avatarUrl': avatarUrl,
+      'backgroundImageUrl': backgroundImageUrl,
+      'premiumPlan': premiumPlan,
+      'premiumExpiresAt': premiumExpiresAt?.toIso8601String(),
+      'premiumActive': premiumActive,
+    };
+  }
 }

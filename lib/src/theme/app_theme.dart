@@ -89,7 +89,11 @@ class ComiVerseColors extends ThemeExtension<ComiVerseColors> {
   ComiVerseColors lerp(ComiVerseColors? other, double t) {
     if (other == null) return this;
     return ComiVerseColors(
-      readerBackground: Color.lerp(readerBackground, other.readerBackground, t)!,
+      readerBackground: Color.lerp(
+        readerBackground,
+        other.readerBackground,
+        t,
+      )!,
       surfaceRaised: Color.lerp(surfaceRaised, other.surfaceRaised, t)!,
       surfaceSubtle: Color.lerp(surfaceSubtle, other.surfaceSubtle, t)!,
       border: Color.lerp(border, other.border, t)!,
@@ -105,8 +109,7 @@ class ComiVerseColors extends ThemeExtension<ComiVerseColors> {
 }
 
 extension ComiVerseTheme on BuildContext {
-  ComiVerseColors get cvColors =>
-      Theme.of(this).extension<ComiVerseColors>()!;
+  ComiVerseColors get cvColors => Theme.of(this).extension<ComiVerseColors>()!;
 }
 
 abstract final class AppTheme {
@@ -119,8 +122,9 @@ abstract final class AppTheme {
   static ThemeData _build(Brightness brightness) {
     final isDark = brightness == Brightness.dark;
     final tokens = isDark ? ComiVerseColors.dark : ComiVerseColors.light;
-    final background =
-        isDark ? const Color(0xFF07040D) : const Color(0xFFFAF6F0);
+    final background = isDark
+        ? const Color(0xFF07040D)
+        : const Color(0xFFFAF6F0);
     final surface = isDark ? const Color(0xFF0D0919) : Colors.white;
     final scheme = ColorScheme.fromSeed(
       seedColor: brandPurple,
@@ -157,7 +161,10 @@ abstract final class AppTheme {
           height: 20 / 15,
           fontWeight: FontWeight.w700,
         ),
-        bodyMedium: baseTextTheme.bodyMedium?.copyWith(fontSize: 14, height: 1.5),
+        bodyMedium: baseTextTheme.bodyMedium?.copyWith(
+          fontSize: 14,
+          height: 1.5,
+        ),
         labelLarge: baseTextTheme.labelLarge?.copyWith(
           fontSize: 14,
           fontWeight: FontWeight.w700,
@@ -191,7 +198,10 @@ abstract final class AppTheme {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: tokens.surfaceSubtle,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 14,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
           borderSide: BorderSide.none,

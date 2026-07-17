@@ -7,22 +7,42 @@ import 'services/api_client.dart';
 import 'theme/app_theme.dart';
 
 class ComiVerseApp extends StatefulWidget {
-  const ComiVerseApp({super.key});
+  const ComiVerseApp({super.key, this.apiClient});
+
+  final ApiClient? apiClient;
 
   @override
   State<ComiVerseApp> createState() => _ComiVerseAppState();
 }
 
 class _ComiVerseAppState extends State<ComiVerseApp> {
-  final ApiClient _apiClient = ApiClient();
+  late final ApiClient _apiClient;
   UserProfile? _user;
   bool _isGuest = false;
+  bool _isRestoringSession = true;
   ThemeMode _themeMode = ThemeMode.system;
+
+  @override
+  void initState() {
+    super.initState();
+    _apiClient = widget.apiClient ?? ApiClient();
+    _restoreSession();
+  }
+
+  Future<void> _restoreSession() async {
+    final user = await _apiClient.restoreSession();
+    if (!mounted) return;
+    setState(() {
+      _user = user;
+      _isRestoringSession = false;
+    });
+  }
 
   void _toggleTheme() {
     final platformBrightness =
         WidgetsBinding.instance.platformDispatcher.platformBrightness;
-    final isCurrentlyDark = _themeMode == ThemeMode.dark ||
+    final isCurrentlyDark =
+        _themeMode == ThemeMode.dark ||
         (_themeMode == ThemeMode.system &&
             platformBrightness == Brightness.dark);
     setState(() {
@@ -44,8 +64,9 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
     });
   }
 
-  void _handleSignOut() {
-    _apiClient.clearSession();
+  Future<void> _handleSignOut() async {
+    await _apiClient.clearSession();
+    if (!mounted) return;
     setState(() {
       _user = null;
       _isGuest = false;
@@ -56,7 +77,8 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
   Widget build(BuildContext context) {
     final platformBrightness =
         WidgetsBinding.instance.platformDispatcher.platformBrightness;
-    final isDarkMode = _themeMode == ThemeMode.dark ||
+    final isDarkMode =
+        _themeMode == ThemeMode.dark ||
         (_themeMode == ThemeMode.system &&
             platformBrightness == Brightness.dark);
     return MaterialApp(
@@ -65,7 +87,9 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: _themeMode,
-      home: _apiClient.hasToken || _user != null || _isGuest
+      home: _isRestoringSession
+          ? const _SessionSplashScreen()
+          : _apiClient.hasToken || _user != null || _isGuest
           ? MainShell(
               apiClient: _apiClient,
               user: _user,
@@ -80,6 +104,26 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
               onToggleTheme: _toggleTheme,
               isDarkMode: isDarkMode,
             ),
+    );
+  }
+}
+
+class _SessionSplashScreen extends StatelessWidget {
+  const _SessionSplashScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.auto_stories_rounded, size: 52),
+            SizedBox(height: 18),
+            CircularProgressIndicator(),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -52,8 +52,10 @@ class _LibraryScreenState extends State<LibraryScreen>
 
   List<Comic> _sorted(List<Comic> source) {
     final result = source
-        .where((comic) =>
-            _genre == null || comic.genres.any((item) => item == _genre))
+        .where(
+          (comic) =>
+              _genre == null || comic.genres.any((item) => item == _genre),
+        )
         .toList();
     if (_sort == 'title') {
       result.sort((a, b) => a.title.compareTo(b.title));
@@ -100,16 +102,16 @@ class _LibraryScreenState extends State<LibraryScreen>
         await widget.apiClient.deleteReadingHistory(comic.id);
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Removed from library.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Removed from library.')));
         _reload();
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.toString())),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
       }
     }
   }
@@ -118,10 +120,8 @@ class _LibraryScreenState extends State<LibraryScreen>
     Navigator.of(context)
         .push(
           MaterialPageRoute(
-            builder: (_) => ComicDetailScreen(
-              apiClient: widget.apiClient,
-              comic: comic,
-            ),
+            builder: (_) =>
+                ComicDetailScreen(apiClient: widget.apiClient, comic: comic),
           ),
         )
         .then((_) => _reload());
@@ -135,7 +135,8 @@ class _LibraryScreenState extends State<LibraryScreen>
         appBar: AppBar(title: const Text('Library')),
         body: EmptyState(
           icon: Icons.lock_outline_rounded,
-          message: 'Sign in to sync saved comics, favorites, and reading history.',
+          message:
+              'Sign in to sync saved comics, favorites, and reading history.',
           actionLabel: 'Sign in',
           onAction: widget.onSignIn,
         ),
@@ -209,8 +210,8 @@ class _LibraryScreenState extends State<LibraryScreen>
               icon: _tab == 2
                   ? Icons.history_rounded
                   : _tab == 1
-                      ? Icons.favorite_outline_rounded
-                      : Icons.bookmark_outline_rounded,
+                  ? Icons.favorite_outline_rounded
+                  : Icons.bookmark_outline_rounded,
               message: 'This library section is empty.',
               actionLabel: 'Explore comics',
               onAction: widget.onExplore,
@@ -242,7 +243,9 @@ class _LibraryScreenState extends State<LibraryScreen>
                               child: SizedBox(
                                 width: 64,
                                 height: 92,
-                                child: ComicCoverImage(url: source.first.imageUrl),
+                                child: ComicCoverImage(
+                                  url: source.first.imageUrl,
+                                ),
                               ),
                             ),
                             const SizedBox(width: 14),
@@ -254,7 +257,9 @@ class _LibraryScreenState extends State<LibraryScreen>
                                     source.first.title,
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(context).textTheme.titleLarge,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleLarge,
                                   ),
                                   const SizedBox(height: 6),
                                   Text(
@@ -283,7 +288,10 @@ class _LibraryScreenState extends State<LibraryScreen>
                   child: SizedBox(
                     height: 70,
                     child: ListView(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                       scrollDirection: Axis.horizontal,
                       children: [
                         Padding(
@@ -308,9 +316,18 @@ class _LibraryScreenState extends State<LibraryScreen>
                           value: _sort,
                           underline: const SizedBox.shrink(),
                           items: const [
-                            DropdownMenuItem(value: 'recent', child: Text('Recent')),
-                            DropdownMenuItem(value: 'title', child: Text('Title')),
-                            DropdownMenuItem(value: 'updated', child: Text('Updated')),
+                            DropdownMenuItem(
+                              value: 'recent',
+                              child: Text('Recent'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'title',
+                              child: Text('Title'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'updated',
+                              child: Text('Updated'),
+                            ),
                           ],
                           onChanged: (value) {
                             if (value != null) setState(() => _sort = value);
@@ -335,18 +352,19 @@ class _LibraryScreenState extends State<LibraryScreen>
                         final columns = constraints.crossAxisExtent >= 820
                             ? 5
                             : constraints.crossAxisExtent >= 600
-                                ? 4
-                                : constraints.crossAxisExtent >= 430
-                                    ? 3
-                                    : 2;
+                            ? 4
+                            : constraints.crossAxisExtent >= 430
+                            ? 3
+                            : 2;
                         return SliverGrid.builder(
                           itemCount: comics.length,
-                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: columns,
-                            mainAxisSpacing: 18,
-                            crossAxisSpacing: 14,
-                            childAspectRatio: 0.62,
-                          ),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: columns,
+                                mainAxisSpacing: 18,
+                                crossAxisSpacing: 14,
+                                childAspectRatio: 0.50,
+                              ),
                           itemBuilder: (context, index) {
                             final comic = comics[index];
                             return Stack(
@@ -365,7 +383,10 @@ class _LibraryScreenState extends State<LibraryScreen>
                                   child: IconButton.filledTonal(
                                     tooltip: 'Remove from library',
                                     onPressed: () => _remove(comic),
-                                    icon: const Icon(Icons.more_horiz_rounded, size: 18),
+                                    icon: const Icon(
+                                      Icons.more_horiz_rounded,
+                                      size: 18,
+                                    ),
                                   ),
                                 ),
                               ],

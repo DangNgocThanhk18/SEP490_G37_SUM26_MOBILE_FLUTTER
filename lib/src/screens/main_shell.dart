@@ -120,7 +120,7 @@ class _MainShellState extends State<MainShell> {
               label: Text(_unreadCount > 99 ? '99+' : '$_unreadCount'),
               child: const Icon(Icons.notifications_rounded),
             ),
-            label: 'Notifications',
+            label: 'Alerts',
           ),
           const NavigationDestination(
             icon: Icon(Icons.person_outline_rounded),

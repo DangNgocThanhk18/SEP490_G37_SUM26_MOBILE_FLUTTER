@@ -67,10 +67,8 @@ class _HomeScreenState extends State<HomeScreen>
   void _openComic(Comic comic) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => ComicDetailScreen(
-          apiClient: widget.apiClient,
-          comic: comic,
-        ),
+        builder: (_) =>
+            ComicDetailScreen(apiClient: widget.apiClient, comic: comic),
       ),
     );
   }
@@ -79,11 +77,12 @@ class _HomeScreenState extends State<HomeScreen>
   Widget build(BuildContext context) {
     super.build(context);
     final scheme = Theme.of(context).colorScheme;
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final scaledRailExtra = ((textScale - 1) * 64).clamp(0, 64).toDouble();
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 16,
         title: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
               width: 30,
@@ -97,7 +96,14 @@ class _HomeScreenState extends State<HomeScreen>
               child: const Icon(Icons.auto_stories_rounded, size: 18),
             ),
             const SizedBox(width: 9),
-            Text('ComiVerse', style: Theme.of(context).textTheme.headlineSmall),
+            Expanded(
+              child: Text(
+                'ComiVerse',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+            ),
           ],
         ),
         actions: [
@@ -149,7 +155,8 @@ class _HomeScreenState extends State<HomeScreen>
               );
             }
             final data = snapshot.data!;
-            final featured = data.trending.firstOrNull ??
+            final featured =
+                data.trending.firstOrNull ??
                 data.recommended.firstOrNull ??
                 data.updated.firstOrNull;
             if (featured == null) {
@@ -182,12 +189,12 @@ class _HomeScreenState extends State<HomeScreen>
                     child: const SectionHeader(title: 'Continue Reading'),
                   ),
                   SizedBox(
-                    height: 126,
+                    height: 140,
                     child: ListView.separated(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       scrollDirection: Axis.horizontal,
                       itemCount: data.history.take(5).length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 12),
+                      separatorBuilder: (_, _) => const SizedBox(width: 12),
                       itemBuilder: (context, index) {
                         final comic = data.history[index];
                         return _ContinueCard(
@@ -207,12 +214,14 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                 ),
                 SizedBox(
-                  height: 230,
+                  // Cover (3:4), two title lines, and metadata need more than
+                  // 230dp on smaller devices and with Android text scaling.
+                  height: 252 + scaledRailExtra,
                   child: ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     scrollDirection: Axis.horizontal,
                     itemCount: data.recommended.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 12),
+                    separatorBuilder: (_, _) => const SizedBox(width: 12),
                     itemBuilder: (context, index) {
                       final comic = data.recommended[index];
                       return ComicCoverCard(
@@ -231,7 +240,8 @@ class _HomeScreenState extends State<HomeScreen>
                     onAction: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) => RankingScreen(apiClient: widget.apiClient),
+                          builder: (_) =>
+                              RankingScreen(apiClient: widget.apiClient),
                         ),
                       );
                     },
@@ -249,7 +259,8 @@ class _HomeScreenState extends State<HomeScreen>
                             child: Text(
                               '${i + 1}',
                               textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                              style: Theme.of(context).textTheme.headlineSmall
+                                  ?.copyWith(
                                     color: i == 0
                                         ? scheme.primary
                                         : scheme.onSurfaceVariant,
@@ -272,9 +283,8 @@ class _HomeScreenState extends State<HomeScreen>
                       final columns = constraints.maxWidth >= 760
                           ? 4
                           : constraints.maxWidth >= 520
-                              ? 3
-                              : 2;
-                      final ratio = columns >= 3 ? 0.72 : 0.68;
+                          ? 3
+                          : 2;
                       return GridView.builder(
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
@@ -283,7 +293,10 @@ class _HomeScreenState extends State<HomeScreen>
                           crossAxisCount: columns,
                           mainAxisSpacing: 16,
                           crossAxisSpacing: 12,
-                          childAspectRatio: ratio,
+                          // The card contains a 3:4 cover plus two title lines
+                          // and metadata. A taller cell prevents overflow at
+                          // 320dp and with Android font scaling.
+                          childAspectRatio: 0.50,
                         ),
                         itemBuilder: (context, index) {
                           final comic = data.updated[index];
@@ -321,109 +334,131 @@ class _FeaturedComic extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return AspectRatio(
-      aspectRatio: MediaQuery.sizeOf(context).width >= 700 ? 2.4 : 1.05,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            ComicCoverImage(url: comic.imageUrl),
-            const DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.transparent, Color(0xF207040D)],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  stops: [0.2, 0.85],
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final baseHeight = constraints.maxWidth >= 700
+            ? 300.0
+            : (constraints.maxWidth / 1.05).clamp(340.0, 420.0);
+        final scaledExtra = ((textScale - 1) * 100).clamp(0, 80).toDouble();
+        return SizedBox(
+          height: baseHeight + scaledExtra,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ComicCoverImage(url: comic.imageUrl),
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.transparent, Color(0xF207040D)],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      stops: [0.2, 0.85],
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Wrap(
-                    spacing: 6,
-                    children: comic.genres.take(2).map((genre) {
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 9,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: scheme.primary,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          genre.toUpperCase(),
-                          style: TextStyle(
-                            color: scheme.onPrimary,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Wrap(
+                        spacing: 6,
+                        children: comic.genres.take(2).map((genre) {
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: scheme.primary,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              genre.toUpperCase(),
+                              style: TextStyle(
+                                color: scheme.onPrimary,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        comic.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(
+                          context,
+                        ).textTheme.displaySmall?.copyWith(color: Colors.white),
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.star_rounded,
+                            size: 17,
+                            color: context.cvColors.rating,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            comic.ratingAverage?.toStringAsFixed(1) ?? 'New',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          if (comic.chapterCount != null) ...[
+                            const Text(
+                              '  ·  ',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                            Text(
+                              '${comic.chapterCount} chapters',
+                              style: const TextStyle(color: Colors.white70),
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (comic.summary?.trim().isNotEmpty == true) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          comic.summary!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            height: 1.35,
                           ),
                         ),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    comic.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                          color: Colors.white,
-                        ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Icon(Icons.star_rounded, size: 17, color: context.cvColors.rating),
-                      const SizedBox(width: 4),
-                      Text(
-                        comic.ratingAverage?.toStringAsFixed(1) ?? 'New',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
+                      ],
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        width: double.infinity,
+                        child: PrimaryGradientButton(
+                          label: comic.latestChapterNumber == null
+                              ? 'View Comic'
+                              : 'Read Chapter ${comic.latestChapterNumber}',
+                          icon: Icons.menu_book_rounded,
+                          onPressed: onTap,
                         ),
                       ),
-                      if (comic.chapterCount != null) ...[
-                        const Text('  ·  ', style: TextStyle(color: Colors.white70)),
-                        Text(
-                          '${comic.chapterCount} chapters',
-                          style: const TextStyle(color: Colors.white70),
-                        ),
-                      ],
                     ],
                   ),
-                  if (comic.summary?.trim().isNotEmpty == true) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      comic.summary!,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white70, height: 1.35),
-                    ),
-                  ],
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: PrimaryGradientButton(
-                      label: comic.latestChapterNumber == null
-                          ? 'View Comic'
-                          : 'Read Chapter ${comic.latestChapterNumber}',
-                      icon: Icons.menu_book_rounded,
-                      onPressed: onTap,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -450,7 +485,7 @@ class _ContinueCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(6),
                   child: SizedBox(
                     width: 70,
-                    height: 100,
+                    height: 110,
                     child: ComicCoverImage(url: comic.imageUrl),
                   ),
                 ),

@@ -49,7 +49,9 @@ class PrimaryGradientButton extends StatelessWidget {
                       Icon(icon, size: 20),
                       const SizedBox(width: 8),
                     ],
-                    Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+                    Flexible(
+                      child: Text(label, overflow: TextOverflow.ellipsis),
+                    ),
                   ],
                 ),
         ),
@@ -80,7 +82,9 @@ class SectionHeader extends StatelessWidget {
           Icon(icon, size: 20, color: context.cvColors.brandOrange),
           const SizedBox(width: 6),
         ],
-        Expanded(child: Text(title, style: Theme.of(context).textTheme.titleLarge)),
+        Expanded(
+          child: Text(title, style: Theme.of(context).textTheme.titleLarge),
+        ),
         if (actionLabel != null)
           TextButton(onPressed: onAction, child: Text(actionLabel!)),
       ],
@@ -108,7 +112,7 @@ class ComicCoverImage extends StatelessWidget {
     return Image.network(
       url!,
       fit: fit,
-      errorBuilder: (_, __, ___) => placeholder,
+      errorBuilder: (_, _, _) => placeholder,
       loadingBuilder: (context, child, progress) {
         if (progress == null) return child;
         return ColoredBox(
@@ -205,9 +209,9 @@ class ComicCoverCard extends StatelessWidget {
                     comic.genres.isEmpty ? 'Comic' : comic.genres.first,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: scheme.primary,
-                        ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: scheme.primary),
                   ),
                 ),
                 if (showChapter && comic.latestChapterNumber != null)
@@ -274,8 +278,8 @@ class ComicListRow extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
