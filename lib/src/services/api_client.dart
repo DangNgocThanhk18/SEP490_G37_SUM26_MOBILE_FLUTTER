@@ -5,6 +5,7 @@ import 'dart:io';
 import '../models/chapter.dart';
 import '../models/comic.dart';
 import '../models/app_notification.dart';
+import '../models/forum.dart';
 import '../models/premium_plan.dart';
 import '../models/user_profile.dart';
 import 'session_storage.dart';
@@ -268,6 +269,34 @@ class ApiClient {
     final value = _unwrapData(json);
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  Future<ForumThread> getForumThread(String threadId) async {
+    final json = await _request(
+      'GET',
+      '/forum-threads/${Uri.encodeComponent(threadId)}',
+      authorized: hasToken,
+    );
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read discussion thread.');
+    }
+    return ForumThread.fromJson(data);
+  }
+
+  Future<List<ForumComment>> getForumComments(String threadId) async {
+    final json = await _request(
+      'GET',
+      '/forum-threads/${Uri.encodeComponent(threadId)}/comments',
+      authorized: hasToken,
+    );
+    final data = _unwrapData(json);
+    if (data is! List) return const [];
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(ForumComment.fromJson)
+        .where((comment) => comment.id.isNotEmpty)
+        .toList();
   }
 
   Future<PremiumPlanSettings> getPremiumPlans() async {

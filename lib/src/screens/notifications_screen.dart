@@ -12,12 +12,16 @@ class NotificationsScreen extends StatefulWidget {
     required this.isGuest,
     required this.onSignIn,
     required this.onUnreadChanged,
+    required this.onOpenNotification,
+    required this.refreshSignal,
   });
 
   final ApiClient apiClient;
   final bool isGuest;
   final VoidCallback onSignIn;
   final ValueChanged<int> onUnreadChanged;
+  final Future<void> Function(AppNotification notification) onOpenNotification;
+  final int refreshSignal;
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -25,7 +29,11 @@ class NotificationsScreen extends StatefulWidget {
 
 class _NotificationsScreenState extends State<NotificationsScreen>
     with AutomaticKeepAliveClientMixin {
-  late Future<List<AppNotification>> _future;
+  List<AppNotification> _items = const [];
+  Object? _error;
+  bool _loading = true;
+  bool _markAllBusy = false;
+  final Set<String> _busyIds = {};
   String _filter = 'all';
 
   @override
@@ -34,17 +42,54 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _load();
   }
 
-  Future<List<AppNotification>> _load() async {
-    if (widget.isGuest) return const [];
-    final items = await widget.apiClient.getNotifications();
-    widget.onUnreadChanged(items.where((item) => !item.isRead).length);
-    return items;
+  @override
+  void didUpdateWidget(covariant NotificationsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isGuest != oldWidget.isGuest ||
+        widget.refreshSignal != oldWidget.refreshSignal) {
+      _load(showLoading: false);
+    }
   }
 
-  void _reload() => setState(() => _future = _load());
+  Future<void> _load({bool showLoading = true}) async {
+    if (widget.isGuest) {
+      if (!mounted) return;
+      setState(() {
+        _items = const [];
+        _error = null;
+        _loading = false;
+      });
+      widget.onUnreadChanged(0);
+      return;
+    }
+
+    if (showLoading && _items.isEmpty && mounted) {
+      setState(() => _loading = true);
+    }
+    try {
+      final items = await widget.apiClient.getNotifications();
+      if (!mounted) return;
+      setState(() {
+        _items = items;
+        _error = null;
+        _loading = false;
+      });
+      _notifyUnreadChanged();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        if (_items.isEmpty) _error = error;
+        _loading = false;
+      });
+    }
+  }
+
+  void _notifyUnreadChanged() {
+    widget.onUnreadChanged(_items.where((item) => !item.isRead).length);
+  }
 
   List<AppNotification> _filtered(List<AppNotification> items) {
     if (_filter == 'all') return items;
@@ -55,6 +100,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
         'interaction' =>
           type.contains('COMMENT') ||
               type.contains('REPLY') ||
+              type.contains('FORUM') ||
               type.contains('INTERACTION'),
         'system' =>
           type.contains('SYSTEM') ||
@@ -67,30 +113,54 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   }
 
   Future<void> _markAll() async {
+    if (_markAllBusy || !_items.any((item) => !item.isRead)) return;
+    setState(() => _markAllBusy = true);
     try {
       await widget.apiClient.markAllNotificationsRead();
-      _reload();
+      if (!mounted) return;
+      setState(() {
+        _items = _items.map((item) => item.copyWith(isRead: true)).toList();
+      });
+      _notifyUnreadChanged();
     } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
-      }
+      _showError(error);
+    } finally {
+      if (mounted) setState(() => _markAllBusy = false);
     }
   }
 
-  Future<void> _markRead(AppNotification item) async {
-    if (item.isRead) return;
+  Future<void> _openNotification(AppNotification item) async {
+    var openedItem = item;
     try {
-      await widget.apiClient.markNotificationRead(item.id);
-      _reload();
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (!item.isRead && !_busyIds.contains(item.id)) {
+        setState(() => _busyIds.add(item.id));
+        await widget.apiClient.markNotificationRead(item.id);
+        if (mounted) {
+          openedItem = item.copyWith(isRead: true);
+          setState(() {
+            _items = _items
+                .map(
+                  (candidate) =>
+                      candidate.id == item.id ? openedItem : candidate,
+                )
+                .toList();
+          });
+          _notifyUnreadChanged();
+        }
       }
+    } catch (error) {
+      _showError(error);
+    } finally {
+      if (mounted) setState(() => _busyIds.remove(item.id));
+      await widget.onOpenNotification(openedItem);
     }
+  }
+
+  void _showError(Object error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(error.toString())));
   }
 
   @override
@@ -114,70 +184,77 @@ class _NotificationsScreenState extends State<NotificationsScreen>
         actions: [
           IconButton(
             tooltip: 'Mark all as read',
-            onPressed: _markAll,
-            icon: const Icon(Icons.done_all_rounded),
+            onPressed: _markAllBusy || !_items.any((item) => !item.isRead)
+                ? null
+                : _markAll,
+            icon: _markAllBusy
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.done_all_rounded),
           ),
         ],
       ),
-      body: FutureBuilder<List<AppNotification>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return ApiErrorState(error: snapshot.error!, onRetry: _reload);
-          }
-          final all = snapshot.data ?? const [];
-          final items = _filtered(all);
-          return RefreshIndicator(
-            onRefresh: () async => _reload(),
-            child: CustomScrollView(
-              key: const PageStorageKey('notifications-scroll'),
-              slivers: [
-                SliverToBoxAdapter(
-                  child: SizedBox(
-                    height: 64,
-                    child: ListView(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 10,
-                      ),
-                      scrollDirection: Axis.horizontal,
-                      children: [
-                        for (final option in const [
-                          ('all', 'All'),
-                          ('chapter', 'New chapters'),
-                          ('interaction', 'Interaction'),
-                          ('system', 'System'),
-                        ])
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              label: Text(option.$2),
-                              selected: _filter == option.$1,
-                              onSelected: (_) =>
-                                  setState(() => _filter = option.$1),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loading && _items.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null && _items.isEmpty) {
+      return ApiErrorState(error: _error!, onRetry: _load);
+    }
+
+    final items = _filtered(_items);
+    return RefreshIndicator(
+      onRefresh: () => _load(showLoading: false),
+      child: CustomScrollView(
+        key: const PageStorageKey('notifications-scroll'),
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: 64,
+              child: ListView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
                 ),
-                if (items.isEmpty)
-                  const SliverFillRemaining(
-                    child: EmptyState(
-                      icon: Icons.notifications_none_rounded,
-                      message: 'No notifications in this category.',
+                scrollDirection: Axis.horizontal,
+                children: [
+                  for (final option in const [
+                    ('all', 'All'),
+                    ('chapter', 'New chapters'),
+                    ('interaction', 'Interaction'),
+                    ('system', 'System'),
+                  ])
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(option.$2),
+                        selected: _filter == option.$1,
+                        onSelected: (_) => setState(() => _filter = option.$1),
+                      ),
                     ),
-                  )
-                else
-                  ..._buildGroups(items),
-                const SliverToBoxAdapter(child: SizedBox(height: 24)),
-              ],
+                ],
+              ),
             ),
-          );
-        },
+          ),
+          if (items.isEmpty)
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: EmptyState(
+                icon: Icons.notifications_none_rounded,
+                message: 'No notifications in this category.',
+              ),
+            )
+          else
+            ..._buildGroups(items),
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
+        ],
       ),
     );
   }
@@ -222,7 +299,11 @@ class _NotificationsScreenState extends State<NotificationsScreen>
           separatorBuilder: (_, _) => const SizedBox(height: 8),
           itemBuilder: (context, index) {
             final item = items[index];
-            return _NotificationRow(item: item, onTap: () => _markRead(item));
+            return _NotificationRow(
+              item: item,
+              busy: _busyIds.contains(item.id),
+              onTap: () => _openNotification(item),
+            );
           },
         ),
       ),
@@ -231,9 +312,14 @@ class _NotificationsScreenState extends State<NotificationsScreen>
 }
 
 class _NotificationRow extends StatelessWidget {
-  const _NotificationRow({required this.item, required this.onTap});
+  const _NotificationRow({
+    required this.item,
+    required this.busy,
+    required this.onTap,
+  });
 
   final AppNotification item;
+  final bool busy;
   final VoidCallback onTap;
 
   @override
@@ -245,7 +331,7 @@ class _NotificationRow extends StatelessWidget {
           ? context.cvColors.surfaceRaised
           : scheme.primaryContainer.withValues(alpha: 0.18),
       child: InkWell(
-        onTap: onTap,
+        onTap: busy ? null : onTap,
         borderRadius: BorderRadius.circular(8),
         child: Padding(
           padding: const EdgeInsets.all(14),
@@ -307,6 +393,25 @@ class _NotificationRow extends StatelessWidget {
                         color: scheme.onSurfaceVariant,
                       ),
                     ),
+                    if (item.actionUrl != null) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Open',
+                            style: Theme.of(context).textTheme.labelMedium
+                                ?.copyWith(color: scheme.primary),
+                          ),
+                          const SizedBox(width: 2),
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            size: 17,
+                            color: scheme.primary,
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -321,7 +426,10 @@ class _NotificationRow extends StatelessWidget {
     if (type.contains('CHAPTER') || type.contains('LIBRARY')) {
       return (Icons.auto_stories_rounded, context.cvColors.info);
     }
-    if (type.contains('COMMENT') || type.contains('REPLY')) {
+    if (type.contains('COMMENT') ||
+        type.contains('REPLY') ||
+        type.contains('FORUM') ||
+        type.contains('INTERACTION')) {
       return (Icons.chat_bubble_outline_rounded, context.cvColors.brandPink);
     }
     if (type.contains('PREMIUM') || type.contains('PAYMENT')) {
