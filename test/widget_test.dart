@@ -2,11 +2,17 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:comiverse_mobile/src/app.dart';
 import 'package:comiverse_mobile/src/services/api_client.dart';
+import 'package:comiverse_mobile/src/services/app_preferences.dart';
 import 'package:comiverse_mobile/src/services/session_storage.dart';
 
 void main() {
   testWidgets('renders login screen', (WidgetTester tester) async {
-    await tester.pumpWidget(ComiVerseApp(apiClient: _testApiClient()));
+    await tester.pumpWidget(
+      ComiVerseApp(
+        apiClient: _testApiClient(),
+        preferences: const _EmptyAppPreferences(),
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Welcome back'), findsOneWidget);
@@ -16,7 +22,12 @@ void main() {
   testWidgets('switches between dark and light themes', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(ComiVerseApp(apiClient: _testApiClient()));
+    await tester.pumpWidget(
+      ComiVerseApp(
+        apiClient: _testApiClient(),
+        preferences: const _EmptyAppPreferences(),
+      ),
+    );
     await tester.pumpAndSettle();
 
     final startsInDarkMode = find
@@ -53,4 +64,14 @@ class _EmptySessionStorage implements SessionStorage {
 
   @override
   Future<void> write(String key, String value) async {}
+}
+
+class _EmptyAppPreferences implements AppPreferences {
+  const _EmptyAppPreferences();
+
+  @override
+  Future<String?> readLanguageCode() async => null;
+
+  @override
+  Future<void> writeLanguageCode(String languageCode) async {}
 }

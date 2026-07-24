@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/comic.dart';
 import '../services/api_client.dart';
 import '../widgets/common_widgets.dart';
@@ -27,7 +28,7 @@ class _RankingScreenState extends State<RankingScreen> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('Ranking')),
+      appBar: AppBar(title: Text(context.tr('Ranking'))),
       body: Column(
         children: [
           Padding(
@@ -35,10 +36,16 @@ class _RankingScreenState extends State<RankingScreen> {
             child: SizedBox(
               width: double.infinity,
               child: SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'day', label: Text('Daily')),
-                  ButtonSegment(value: 'week', label: Text('Weekly')),
-                  ButtonSegment(value: 'month', label: Text('Monthly')),
+                segments: [
+                  ButtonSegment(value: 'day', label: Text(context.tr('Daily'))),
+                  ButtonSegment(
+                    value: 'week',
+                    label: Text(context.tr('Weekly')),
+                  ),
+                  ButtonSegment(
+                    value: 'month',
+                    label: Text(context.tr('Monthly')),
+                  ),
                 ],
                 selected: {_timeframe},
                 onSelectionChanged: (value) {
@@ -63,9 +70,9 @@ class _RankingScreenState extends State<RankingScreen> {
                 }
                 final comics = snapshot.data ?? const [];
                 if (comics.isEmpty) {
-                  return const EmptyState(
+                  return EmptyState(
                     icon: Icons.leaderboard_outlined,
-                    message: 'Ranking data is not available yet.',
+                    message: context.tr('Ranking data is not available yet.'),
                   );
                 }
                 return RefreshIndicator(

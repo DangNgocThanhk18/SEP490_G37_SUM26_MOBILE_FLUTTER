@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/chapter.dart';
 import '../models/comic.dart';
 import '../services/api_client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/in_app_notification.dart';
 import 'reader_screen.dart';
 
 class ComicDetailScreen extends StatefulWidget {
@@ -64,7 +66,8 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
       final saved = await widget.apiClient.toggleSaved(widget.comic.id);
       if (mounted) setState(() => _saved = saved);
     } catch (error) {
-      _showMessage(error.toString());
+      if (!mounted) return;
+      _showMessage(context.localizedError(error));
     } finally {
       if (mounted) setState(() => _actionBusy = false);
     }
@@ -78,28 +81,47 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
       final liked = await widget.apiClient.toggleLiked(widget.comic.id);
       if (mounted) setState(() => _liked = liked);
     } catch (error) {
-      _showMessage(error.toString());
+      if (!mounted) return;
+      _showMessage(context.localizedError(error));
     } finally {
       if (mounted) setState(() => _actionBusy = false);
     }
   }
 
   void _requestSignIn() {
-    _showMessage('Sign in to sync this action with your library.');
+    _showMessage(
+      context.tr('Sign in to sync this action with your library.'),
+      type: InAppNotificationType.information,
+    );
   }
 
-  void _showMessage(String message) {
+  void _showMessage(
+    String message, {
+    InAppNotificationType type = InAppNotificationType.error,
+  }) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
+    InAppNotifications.show(
       context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+      type: type,
+      title: context.tr(switch (type) {
+        InAppNotificationType.success => 'Success',
+        InAppNotificationType.error => 'Error',
+        InAppNotificationType.warning => 'Warning',
+        InAppNotificationType.information => 'Information',
+      }),
+      message: message,
+    );
   }
 
   Future<void> _share(Comic comic) async {
     await Clipboard.setData(
       ClipboardData(text: 'ComiVerse · ${comic.title}\nComic ID: ${comic.id}'),
     );
-    _showMessage('Comic link copied.');
+    if (!mounted) return;
+    _showMessage(
+      context.tr('Comic link copied.'),
+      type: InAppNotificationType.success,
+    );
   }
 
   void _openReader(List<ChapterLite> chapters, int index) {
@@ -141,8 +163,11 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                     onSelected: (value) {
                       if (value == 'share') _share(comic);
                     },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'share', child: Text('Share comic')),
+                    itemBuilder: (_) => [
+                      PopupMenuItem(
+                        value: 'share',
+                        child: Text(context.tr('Share comic')),
+                      ),
                     ],
                   ),
                 ],
@@ -206,15 +231,32 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                             runSpacing: 5,
                             children: [
                               Text(
-                                'By ${comic.authorName ?? 'Unknown author'}',
+                                context.tr(
+                                  'By {author}',
+                                  values: {
+                                    'author':
+                                        comic.authorName ??
+                                        context.tr('Unknown author'),
+                                  },
+                                ),
                               ),
-                              Text('· ${comic.status ?? 'Published'}'),
+                              Text('· ${_statusLabel(context, comic.status)}'),
                               if (comic.viewCount != null)
                                 Text(
-                                  '· ${compactNumber(comic.viewCount!)} views',
+                                  context.tr(
+                                    '· {count} views',
+                                    values: {
+                                      'count': compactNumber(comic.viewCount!),
+                                    },
+                                  ),
                                 ),
                               if (comic.chapterCount != null)
-                                Text('· ${comic.chapterCount} chapters'),
+                                Text(
+                                  context.tr(
+                                    '· {count} chapters',
+                                    values: {'count': comic.chapterCount},
+                                  ),
+                                ),
                             ],
                           ),
                           const SizedBox(height: 14),
@@ -230,7 +272,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                             children: [
                               Expanded(
                                 child: PrimaryGradientButton(
-                                  label: 'Read Now',
+                                  label: context.tr('Read Now'),
                                   icon: Icons.play_arrow_rounded,
                                   onPressed: chapters.isEmpty
                                       ? null
@@ -246,7 +288,9 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                                         ? Icons.bookmark_rounded
                                         : Icons.bookmark_outline_rounded,
                                   ),
-                                  label: Text(_saved ? 'Saved' : 'Save'),
+                                  label: Text(
+                                    context.tr(_saved ? 'Saved' : 'Save'),
+                                  ),
                                 ),
                               ),
                             ],
@@ -260,20 +304,23 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                                 icon: _liked
                                     ? Icons.favorite_rounded
                                     : Icons.favorite_outline_rounded,
-                                label: _liked ? 'Liked' : 'Like',
+                                label: context.tr(_liked ? 'Liked' : 'Like'),
                                 selected: _liked,
                                 onTap: _toggleLike,
                               ),
                               _ActionItem(
                                 icon: Icons.share_outlined,
-                                label: 'Share',
+                                label: context.tr('Share'),
                                 onTap: () => _share(comic),
                               ),
                               _ActionItem(
                                 icon: Icons.download_outlined,
-                                label: 'Download',
+                                label: context.tr('Download'),
                                 onTap: () => _showMessage(
-                                  'Offline downloads are available with Premium.',
+                                  context.tr(
+                                    'Offline downloads are available with Premium.',
+                                  ),
+                                  type: InAppNotificationType.warning,
                                 ),
                               ),
                             ],
@@ -283,7 +330,9 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                           Text(
                             comic.summary?.trim().isNotEmpty == true
                                 ? comic.summary!
-                                : 'No synopsis has been published yet.',
+                                : context.tr(
+                                    'No synopsis has been published yet.',
+                                  ),
                             maxLines: _showFullSummary ? null : 3,
                             overflow: _showFullSummary
                                 ? TextOverflow.visible
@@ -297,7 +346,9 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                                 () => _showFullSummary = !_showFullSummary,
                               ),
                               child: Text(
-                                _showFullSummary ? 'Show Less' : 'Read More',
+                                context.tr(
+                                  _showFullSummary ? 'Show Less' : 'Read More',
+                                ),
                               ),
                             ),
                           const SizedBox(height: 18),
@@ -321,7 +372,9 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                                         ),
                                       ),
                                       child: Text(
-                                        index == 0 ? 'Chapters' : 'Comments',
+                                        context.tr(
+                                          index == 0 ? 'Chapters' : 'Comments',
+                                        ),
                                         style: TextStyle(
                                           fontWeight: FontWeight.w700,
                                           color: _tab == index
@@ -341,7 +394,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                 ),
               ),
               if (snapshot.connectionState == ConnectionState.waiting)
-                const SliverFillRemaining(
+                SliverFillRemaining(
                   hasScrollBody: false,
                   child: Center(child: CircularProgressIndicator()),
                 )
@@ -354,20 +407,21 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                   ),
                 )
               else if (_tab == 1)
-                const SliverFillRemaining(
+                SliverFillRemaining(
                   hasScrollBody: false,
                   child: EmptyState(
                     icon: Icons.chat_bubble_outline_rounded,
-                    message:
-                        'Comments are not available from the current backend API.',
+                    message: context.tr(
+                      'Comments are not available from the current backend API.',
+                    ),
                   ),
                 )
               else if (chapters.isEmpty)
-                const SliverFillRemaining(
+                SliverFillRemaining(
                   hasScrollBody: false,
                   child: EmptyState(
                     icon: Icons.menu_book_outlined,
-                    message: 'No published chapters yet.',
+                    message: context.tr('No published chapters yet.'),
                   ),
                 )
               else
@@ -522,8 +576,8 @@ class _ChapterRow extends StatelessWidget {
           ],
         ),
         subtitle: Text(
-          '${_formatDate(chapter.createdAt)}'
-          '${chapter.viewCount == null ? '' : ' · ${compactNumber(chapter.viewCount!)} views'}',
+          '${_formatDate(context, chapter.createdAt)}'
+          '${chapter.viewCount == null ? '' : context.tr(' · {count} views', values: {'count': compactNumber(chapter.viewCount!)})}',
         ),
         trailing: isRead
             ? Icon(Icons.check_circle_rounded, color: scheme.primary)
@@ -532,12 +586,28 @@ class _ChapterRow extends StatelessWidget {
     );
   }
 
-  String _formatDate(DateTime? date) {
-    if (date == null) return 'Chapter ${chapter.chapterNumber}';
+  String _formatDate(BuildContext context, DateTime? date) {
+    if (date == null) {
+      return context.tr(
+        'Chapter {number}',
+        values: {'number': chapter.chapterNumber},
+      );
+    }
     final local = date.toLocal();
     return '${local.day.toString().padLeft(2, '0')}/'
         '${local.month.toString().padLeft(2, '0')}/${local.year}';
   }
+}
+
+String _statusLabel(BuildContext context, String? status) {
+  final normalized = status?.trim().toUpperCase();
+  return switch (normalized) {
+    'ONGOING' => context.tr('Ongoing'),
+    'COMPLETED' => context.tr('Completed'),
+    'PUBLISHED' => context.tr('Published'),
+    null || '' => context.tr('Published'),
+    _ => status!,
+  };
 }
 
 class _ComicDetailData {

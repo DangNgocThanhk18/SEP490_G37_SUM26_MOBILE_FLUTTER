@@ -1,15 +1,21 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+
+import 'l10n/app_localizations.dart';
 import 'models/user_profile.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_shell.dart';
 import 'services/api_client.dart';
+import 'services/app_preferences.dart';
 import 'theme/app_theme.dart';
 
 class ComiVerseApp extends StatefulWidget {
-  const ComiVerseApp({super.key, this.apiClient});
+  const ComiVerseApp({super.key, this.apiClient, this.preferences});
 
   final ApiClient? apiClient;
+  final AppPreferences? preferences;
 
   @override
   State<ComiVerseApp> createState() => _ComiVerseAppState();
@@ -17,25 +23,58 @@ class ComiVerseApp extends StatefulWidget {
 
 class _ComiVerseAppState extends State<ComiVerseApp> {
   late final ApiClient _apiClient;
+  late final AppPreferences _preferences;
   UserProfile? _user;
   bool _isGuest = false;
   bool _isRestoringSession = true;
   ThemeMode _themeMode = ThemeMode.system;
+  Locale _locale = const Locale('en');
 
   @override
   void initState() {
     super.initState();
     _apiClient = widget.apiClient ?? ApiClient();
-    _restoreSession();
+    _preferences = widget.preferences ?? const SecureAppPreferences();
+    _restoreAppState();
   }
 
-  Future<void> _restoreSession() async {
-    final user = await _apiClient.restoreSession();
+  Future<void> _restoreAppState() async {
+    final userFuture = _apiClient.restoreSession();
+    final languageFuture = _readLanguageCode();
+    final user = await userFuture;
+    final languageCode = await languageFuture;
     if (!mounted) return;
     setState(() {
       _user = user;
+      if (languageCode == 'vi' || languageCode == 'en') {
+        _locale = Locale(languageCode!);
+        _apiClient.setLanguage(languageCode);
+      }
       _isRestoringSession = false;
     });
+  }
+
+  Future<String?> _readLanguageCode() async {
+    try {
+      return await _preferences.readLanguageCode();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _changeLocale(Locale locale) {
+    if (_locale.languageCode == locale.languageCode) return;
+    _apiClient.setLanguage(locale.languageCode);
+    setState(() => _locale = Locale(locale.languageCode));
+    unawaited(_writeLanguageCode(locale.languageCode));
+  }
+
+  Future<void> _writeLanguageCode(String languageCode) async {
+    try {
+      await _preferences.writeLanguageCode(languageCode);
+    } catch (_) {
+      // A storage failure must not prevent an immediate language change.
+    }
   }
 
   void _toggleTheme() {
@@ -87,6 +126,14 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: _themeMode,
+      locale: _locale,
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       home: _isRestoringSession
           ? const _SessionSplashScreen()
           : _apiClient.hasToken || _user != null || _isGuest
@@ -96,6 +143,8 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
               onSignOut: _handleSignOut,
               onToggleTheme: _toggleTheme,
               isDarkMode: isDarkMode,
+              locale: _locale,
+              onLocaleChanged: _changeLocale,
             )
           : LoginScreen(
               apiClient: _apiClient,

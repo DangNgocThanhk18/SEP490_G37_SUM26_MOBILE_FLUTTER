@@ -3,6 +3,7 @@ import 'package:comiverse_mobile/src/models/chapter.dart';
 import 'package:comiverse_mobile/src/models/comic.dart';
 import 'package:comiverse_mobile/src/models/premium_plan.dart';
 import 'package:comiverse_mobile/src/models/user_profile.dart';
+import 'package:comiverse_mobile/src/l10n/app_localizations.dart';
 import 'package:comiverse_mobile/src/screens/comic_detail_screen.dart';
 import 'package:comiverse_mobile/src/screens/main_shell.dart';
 import 'package:comiverse_mobile/src/screens/premium_screen.dart';
@@ -10,9 +11,55 @@ import 'package:comiverse_mobile/src/screens/reader_screen.dart';
 import 'package:comiverse_mobile/src/services/api_client.dart';
 import 'package:comiverse_mobile/src/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('Vietnamese shell has no overflow at 320dp', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(320, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final apiClient = _FakeApiClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        locale: const Locale('vi'),
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: const [
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        home: MediaQuery(
+          data: const MediaQueryData(
+            size: Size(320, 700),
+            textScaler: TextScaler.linear(1.3),
+          ),
+          child: MainShell(
+            apiClient: apiClient,
+            user: _FakeApiClient.user,
+            onSignOut: () {},
+            onToggleTheme: () {},
+            isDarkMode: false,
+            locale: const Locale('vi'),
+            onLocaleChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Trang chủ'), findsOneWidget);
+    expect(find.text('Khám phá'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byIcon(Icons.person_outline_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('Hồ sơ'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('reader shell has no overflow at 320dp with text scaling', (
     tester,
   ) async {

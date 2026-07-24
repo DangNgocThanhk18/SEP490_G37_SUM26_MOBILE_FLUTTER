@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/premium_plan.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/in_app_notification.dart';
 
 class PremiumScreen extends StatefulWidget {
   const PremiumScreen({super.key, required this.apiClient, required this.user});
@@ -25,63 +27,39 @@ class _PremiumScreenState extends State<PremiumScreen> {
       setState(() => _future = widget.apiClient.getPremiumPlans());
 
   Future<void> _upgrade() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirm Premium upgrade'),
-        content: Text('Continue with the ${_selected.toLowerCase()} plan?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Confirm'),
-          ),
-        ],
+    final confirmed = await InAppModal.confirm(
+      context,
+      title: context.tr('Confirm Premium upgrade'),
+      message: context.tr(
+        'Continue with the {plan} plan?',
+        values: {
+          'plan': context.tr(_selected == 'YEARLY' ? 'Yearly' : 'Monthly'),
+        },
       ),
+      confirmLabel: context.tr('Confirm'),
+      cancelLabel: context.tr('Cancel'),
+      icon: Icons.workspace_premium_rounded,
+      barrierDismissible: false,
     );
-    if (confirmed != true) return;
+    if (!confirmed) return;
     setState(() => _upgrading = true);
     try {
       await widget.apiClient.upgradePlan(_selected);
       if (mounted) {
-        await showDialog<void>(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            icon: Icon(
-              Icons.workspace_premium_rounded,
-              color: context.cvColors.rating,
-            ),
-            title: const Text('Welcome to Premium'),
-            content: const Text('Your Premium plan is now active.'),
-            actions: [
-              FilledButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Done'),
-              ),
-            ],
-          ),
+        InAppNotifications.success(
+          context,
+          title: context.tr('Welcome to Premium'),
+          message: context.tr('Your Premium plan is now active.'),
+          duration: const Duration(seconds: 6),
         );
       }
     } catch (error) {
       if (mounted) {
-        await showDialog<void>(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            title: const Text('Upgrade failed'),
-            content: Text(error.toString()),
-            actions: [
-              FilledButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Close'),
-              ),
-            ],
-          ),
+        InAppNotifications.error(
+          context,
+          title: context.tr('Upgrade failed'),
+          message: context.localizedError(error),
+          duration: null,
         );
       }
     } finally {
@@ -92,7 +70,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Premium Upgrade')),
+      appBar: AppBar(title: Text(context.tr('Premium Upgrade'))),
       body: FutureBuilder<PremiumPlanSettings>(
         future: _future,
         builder: (context, snapshot) {
@@ -134,13 +112,15 @@ class _PremiumScreenState extends State<PremiumScreen> {
                         ),
                         const SizedBox(height: 22),
                         Text(
-                          'Read without limits',
+                          context.tr('Read without limits'),
                           textAlign: TextAlign.center,
                           style: Theme.of(context).textTheme.headlineSmall,
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'Unlock the complete catalog, support creators, and enjoy a cleaner reading experience.',
+                          context.tr(
+                            'Unlock the complete catalog, support creators, and enjoy a cleaner reading experience.',
+                          ),
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             color: Theme.of(
@@ -168,7 +148,9 @@ class _PremiumScreenState extends State<PremiumScreen> {
                                           ).colorScheme.primary,
                                         ),
                                         const SizedBox(width: 12),
-                                        Expanded(child: Text(benefit)),
+                                        Expanded(
+                                          child: Text(context.tr(benefit)),
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -178,23 +160,23 @@ class _PremiumScreenState extends State<PremiumScreen> {
                         ),
                         const SizedBox(height: 26),
                         Text(
-                          'Choose your plan',
+                          context.tr('Choose your plan'),
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                         const SizedBox(height: 12),
                         _PlanOption(
-                          title: 'Premium Yearly',
+                          title: context.tr('Premium Yearly'),
                           price: _formatCurrency(plans.yearlyPrice),
-                          period: '/ year',
-                          badge: 'BEST VALUE',
+                          period: context.tr('/ year'),
+                          badge: context.tr('BEST VALUE'),
                           selected: _selected == 'YEARLY',
                           onTap: () => setState(() => _selected = 'YEARLY'),
                         ),
                         const SizedBox(height: 10),
                         _PlanOption(
-                          title: 'Premium Monthly',
+                          title: context.tr('Premium Monthly'),
                           price: _formatCurrency(plans.monthlyPrice),
-                          period: '/ month',
+                          period: context.tr('/ month'),
                           selected: _selected == 'MONTHLY',
                           onTap: () => setState(() => _selected = 'MONTHLY'),
                         ),
@@ -202,16 +184,20 @@ class _PremiumScreenState extends State<PremiumScreen> {
                         SizedBox(
                           width: double.infinity,
                           child: PrimaryGradientButton(
-                            label: widget.user.premiumActive
-                                ? 'Switch Premium Plan'
-                                : 'Start Premium',
+                            label: context.tr(
+                              widget.user.premiumActive
+                                  ? 'Switch Premium Plan'
+                                  : 'Start Premium',
+                            ),
                             loading: _upgrading,
                             onPressed: _upgrade,
                           ),
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'Plan availability and prices are loaded from ComiVerse system settings.',
+                          context.tr(
+                            'Plan availability and prices are loaded from ComiVerse system settings.',
+                          ),
                           textAlign: TextAlign.center,
                           style: Theme.of(context).textTheme.bodySmall,
                         ),

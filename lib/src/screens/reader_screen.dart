@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/chapter.dart';
 import '../services/api_client.dart';
 import '../theme/app_theme.dart';
@@ -128,10 +129,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     }
                     final chapter = snapshot.data;
                     if (chapter == null || chapter.images.isEmpty) {
-                      return const EmptyState(
+                      return EmptyState(
                         icon: Icons.broken_image_outlined,
-                        message:
-                            'No chapter pages were returned by the backend.',
+                        message: context.tr(
+                          'No chapter pages were returned by the backend.',
+                        ),
                       );
                     }
                     return Center(
@@ -183,7 +185,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
                                   color: tokens.surfaceSubtle,
                                   child: Center(
                                     child: Text(
-                                      'Cannot load page ${index + 1}',
+                                      context.tr(
+                                        'Cannot load page {page}',
+                                        values: {'page': index + 1},
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -203,7 +208,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 left: 0,
                 right: 0,
                 child: _ReaderTopBar(
-                  comicTitle: widget.comicTitle ?? 'ComiVerse Reader',
+                  comicTitle:
+                      widget.comicTitle ?? context.tr('ComiVerse Reader'),
                   chapter: _chapter,
                   chapters: widget.chapters,
                   currentIndex: _currentIndex,
@@ -262,7 +268,7 @@ class _ReaderTopBar extends StatelessWidget {
           child: Row(
             children: [
               IconButton(
-                tooltip: 'Back',
+                tooltip: context.tr('Back'),
                 onPressed: onBack,
                 icon: const Icon(Icons.arrow_back_rounded),
               ),
@@ -287,7 +293,13 @@ class _ReaderTopBar extends StatelessWidget {
                             DropdownMenuItem(
                               value: index,
                               child: Text(
-                                'Ch. ${chapters[index].chapterNumber}: ${chapters[index].title}',
+                                context.tr(
+                                  'Ch. {number}: {title}',
+                                  values: {
+                                    'number': chapters[index].chapterNumber,
+                                    'title': chapters[index].title,
+                                  },
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: Theme.of(context).textTheme.bodySmall,
@@ -303,13 +315,16 @@ class _ReaderTopBar extends StatelessWidget {
                 ),
               ),
               PopupMenuButton<String>(
-                tooltip: 'Reader options',
-                itemBuilder: (_) => const [
+                tooltip: context.tr('Reader options'),
+                itemBuilder: (_) => [
                   PopupMenuItem(
                     value: 'vertical',
-                    child: Text('Vertical scroll'),
+                    child: Text(context.tr('Vertical scroll')),
                   ),
-                  PopupMenuItem(value: 'fit', child: Text('Fit to width')),
+                  PopupMenuItem(
+                    value: 'fit',
+                    child: Text(context.tr('Fit to width')),
+                  ),
                 ],
               ),
             ],
@@ -354,17 +369,17 @@ class _ReaderBottomBar extends StatelessWidget {
                 children: [
                   _ReaderControl(
                     icon: Icons.skip_previous_rounded,
-                    label: 'Previous',
+                    label: context.tr('Previous'),
                     onTap: hasPrevious ? onPrevious : null,
                   ),
                   IconButton.filledTonal(
-                    tooltip: 'Back to top',
+                    tooltip: context.tr('Back to top'),
                     onPressed: onBackToTop,
                     icon: const Icon(Icons.vertical_align_top_rounded),
                   ),
                   _ReaderControl(
                     icon: Icons.skip_next_rounded,
-                    label: 'Next',
+                    label: context.tr('Next'),
                     onTap: hasNext ? onNext : null,
                   ),
                 ],
@@ -432,7 +447,7 @@ class _ReaderEnd extends StatelessWidget {
         child: Column(
           children: [
             Text(
-              'End of chapter',
+              context.tr('End of chapter'),
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 18),
@@ -442,7 +457,7 @@ class _ReaderEnd extends StatelessWidget {
                   child: OutlinedButton.icon(
                     onPressed: hasPrevious ? onPrevious : null,
                     icon: const Icon(Icons.arrow_back_rounded),
-                    label: const Text('Previous'),
+                    label: Text(context.tr('Previous')),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -450,7 +465,7 @@ class _ReaderEnd extends StatelessWidget {
                   child: FilledButton.icon(
                     onPressed: hasNext ? onNext : null,
                     icon: const Icon(Icons.arrow_forward_rounded),
-                    label: const Text('Next'),
+                    label: Text(context.tr('Next')),
                   ),
                 ),
               ],
@@ -458,7 +473,7 @@ class _ReaderEnd extends StatelessWidget {
             TextButton.icon(
               onPressed: onBackToTop,
               icon: const Icon(Icons.vertical_align_top_rounded),
-              label: const Text('Back to Top'),
+              label: Text(context.tr('Back to Top')),
             ),
           ],
         ),

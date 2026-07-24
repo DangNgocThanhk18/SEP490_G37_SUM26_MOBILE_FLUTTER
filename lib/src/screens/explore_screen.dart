@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/comic.dart';
 import '../services/api_client.dart';
 import '../widgets/common_widgets.dart';
@@ -84,12 +85,12 @@ class _ExploreScreenState extends State<ExploreScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Filters',
+                      context.tr('Filters'),
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 20),
                     Text(
-                      'Genre',
+                      context.tr('Genre'),
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     const SizedBox(height: 8),
@@ -98,7 +99,7 @@ class _ExploreScreenState extends State<ExploreScreen>
                       runSpacing: 8,
                       children: [
                         ChoiceChip(
-                          label: const Text('All'),
+                          label: Text(context.tr('All')),
                           selected: genre == null,
                           onSelected: (_) => setModalState(() => genre = null),
                         ),
@@ -113,7 +114,7 @@ class _ExploreScreenState extends State<ExploreScreen>
                     ),
                     const SizedBox(height: 20),
                     Text(
-                      'Status',
+                      context.tr('Status'),
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     const SizedBox(height: 8),
@@ -121,13 +122,13 @@ class _ExploreScreenState extends State<ExploreScreen>
                       spacing: 8,
                       children: [
                         ChoiceChip(
-                          label: const Text('All'),
+                          label: Text(context.tr('All')),
                           selected: status == null,
                           onSelected: (_) => setModalState(() => status = null),
                         ),
                         for (final item in const ['ONGOING', 'COMPLETED'])
                           ChoiceChip(
-                            label: Text(item.toLowerCase()),
+                            label: Text(_statusLabel(context, item)),
                             selected: status == item,
                             onSelected: (_) =>
                                 setModalState(() => status = item),
@@ -137,23 +138,25 @@ class _ExploreScreenState extends State<ExploreScreen>
                     const SizedBox(height: 20),
                     DropdownButtonFormField<String>(
                       initialValue: sort,
-                      decoration: const InputDecoration(labelText: 'Sort by'),
-                      items: const [
+                      decoration: InputDecoration(
+                        labelText: context.tr('Sort by'),
+                      ),
+                      items: [
                         DropdownMenuItem(
                           value: 'default',
-                          child: Text('Default'),
+                          child: Text(context.tr('Default')),
                         ),
                         DropdownMenuItem(
                           value: 'rating',
-                          child: Text('Top rated'),
+                          child: Text(context.tr('Top rated')),
                         ),
                         DropdownMenuItem(
                           value: 'views',
-                          child: Text('Most viewed'),
+                          child: Text(context.tr('Most viewed')),
                         ),
                         DropdownMenuItem(
                           value: 'updated',
-                          child: Text('Recently updated'),
+                          child: Text(context.tr('Recently updated')),
                         ),
                       ],
                       onChanged: (value) {
@@ -172,7 +175,7 @@ class _ExploreScreenState extends State<ExploreScreen>
                             sort: sort,
                           ),
                         ),
-                        child: const Text('Show results'),
+                        child: Text(context.tr('Show results')),
                       ),
                     ),
                   ],
@@ -206,10 +209,10 @@ class _ExploreScreenState extends State<ExploreScreen>
     super.build(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Explore'),
+        title: Text(context.tr('Explore')),
         actions: [
           IconButton(
-            tooltip: 'Ranking',
+            tooltip: context.tr('Ranking'),
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (_) => RankingScreen(apiClient: widget.apiClient),
@@ -245,15 +248,17 @@ class _ExploreScreenState extends State<ExploreScreen>
                           child: TextField(
                             onChanged: (value) =>
                                 setState(() => _query = value),
-                            decoration: const InputDecoration(
-                              hintText: 'Search comics, authors, genres...',
-                              prefixIcon: Icon(Icons.search_rounded),
+                            decoration: InputDecoration(
+                              hintText: context.tr(
+                                'Search comics, authors, genres...',
+                              ),
+                              prefixIcon: const Icon(Icons.search_rounded),
                             ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         IconButton.filledTonal(
-                          tooltip: 'Filters',
+                          tooltip: context.tr('Filters'),
                           onPressed: () => _showFilters(source),
                           icon: const Icon(Icons.tune_rounded),
                         ),
@@ -271,7 +276,7 @@ class _ExploreScreenState extends State<ExploreScreen>
                         Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: ChoiceChip(
-                            label: const Text('All'),
+                            label: Text(context.tr('All')),
                             selected: _genre == null,
                             onSelected: (_) => setState(() => _genre = null),
                           ),
@@ -303,12 +308,12 @@ class _ExploreScreenState extends State<ExploreScreen>
                             ),
                           if (_status != null)
                             InputChip(
-                              label: Text(_status!.toLowerCase()),
+                              label: Text(_statusLabel(context, _status!)),
                               onDeleted: () => setState(() => _status = null),
                             ),
                           if (_sort != 'default')
                             InputChip(
-                              label: Text(_sort),
+                              label: Text(_sortLabel(context, _sort)),
                               onDeleted: () =>
                                   setState(() => _sort = 'default'),
                             ),
@@ -317,10 +322,10 @@ class _ExploreScreenState extends State<ExploreScreen>
                     ),
                   ),
                 if (comics.isEmpty)
-                  const SliverFillRemaining(
+                  SliverFillRemaining(
                     child: EmptyState(
                       icon: Icons.search_off_rounded,
-                      message: 'No comics match these filters.',
+                      message: context.tr('No comics match these filters.'),
                     ),
                   )
                 else
@@ -364,6 +369,24 @@ class _ExploreScreenState extends State<ExploreScreen>
         },
       ),
     );
+  }
+
+  String _statusLabel(BuildContext context, String status) {
+    return switch (status) {
+      'ONGOING' => context.tr('Ongoing'),
+      'COMPLETED' => context.tr('Completed'),
+      _ => status,
+    };
+  }
+
+  String _sortLabel(BuildContext context, String sort) {
+    return switch (sort) {
+      'default' => context.tr('Default'),
+      'rating' => context.tr('Top rated'),
+      'views' => context.tr('Most viewed'),
+      'updated' => context.tr('Recently updated'),
+      _ => sort,
+    };
   }
 }
 

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/in_app_notification.dart';
 import 'premium_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
@@ -15,6 +17,8 @@ class ProfileScreen extends StatelessWidget {
     required this.onToggleTheme,
     required this.onOpenHistory,
     required this.onSignOut,
+    this.locale = const Locale('en'),
+    this.onLocaleChanged,
   });
 
   final ApiClient apiClient;
@@ -23,23 +27,27 @@ class ProfileScreen extends StatelessWidget {
   final VoidCallback onToggleTheme;
   final VoidCallback onOpenHistory;
   final VoidCallback onSignOut;
+  final Locale locale;
+  final ValueChanged<Locale>? onLocaleChanged;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     if (user == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Profile')),
+        appBar: AppBar(title: Text(context.tr('Profile'))),
         body: EmptyState(
           icon: Icons.person_outline_rounded,
-          message: 'Sign in to manage your profile and Premium plan.',
-          actionLabel: 'Sign in',
+          message: context.tr(
+            'Sign in to manage your profile and Premium plan.',
+          ),
+          actionLabel: context.tr('Sign in'),
           onAction: onSignOut,
         ),
       );
     }
     return Scaffold(
-      appBar: AppBar(title: const Text('Profile')),
+      appBar: AppBar(title: Text(context.tr('Profile'))),
       body: ListView(
         key: const PageStorageKey('profile-scroll'),
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 30),
@@ -122,7 +130,7 @@ class ProfileScreen extends StatelessWidget {
                         child: Text(
                           user!.premiumActive
                               ? 'ComiVerse ${user!.premiumPlan ?? 'Premium'}'
-                              : 'Upgrade to ComiVerse Premium',
+                              : context.tr('Upgrade to ComiVerse Premium'),
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                       ),
@@ -131,16 +139,21 @@ class ProfileScreen extends StatelessWidget {
                   if (user!.premiumExpiresAt != null) ...[
                     const SizedBox(height: 6),
                     Text(
-                      'Active until ${_formatDate(user!.premiumExpiresAt!)}',
+                      context.tr(
+                        'Active until {date}',
+                        values: {'date': _formatDate(user!.premiumExpiresAt!)},
+                      ),
                     ),
                   ],
                   const SizedBox(height: 14),
                   SizedBox(
                     width: double.infinity,
                     child: PrimaryGradientButton(
-                      label: user!.premiumActive
-                          ? 'Manage Plan'
-                          : 'View Premium Plans',
+                      label: context.tr(
+                        user!.premiumActive
+                            ? 'Manage Plan'
+                            : 'View Premium Plans',
+                      ),
                       onPressed: () => Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (_) =>
@@ -155,68 +168,73 @@ class ProfileScreen extends StatelessWidget {
           ),
           const SizedBox(height: 24),
           _SettingsGroup(
-            title: 'Account',
+            title: context.tr('Account'),
             children: [
               _SettingsTile(
                 icon: Icons.person_outline_rounded,
-                title: 'Personal Information',
+                title: context.tr('Personal Information'),
                 subtitle: user!.email,
                 onTap: () => _showProfileInfo(context),
               ),
               _SettingsTile(
                 icon: Icons.lock_outline_rounded,
-                title: 'Change Password',
+                title: context.tr('Change Password'),
                 onTap: () => _showChangePassword(context),
               ),
               _SettingsTile(
                 icon: Icons.history_rounded,
-                title: 'Reading History',
+                title: context.tr('Reading History'),
                 onTap: onOpenHistory,
               ),
             ],
           ),
           const SizedBox(height: 20),
           _SettingsGroup(
-            title: 'App Settings',
+            title: context.tr('App Settings'),
             children: [
               _SettingsTile(
                 icon: isDarkMode
                     ? Icons.dark_mode_outlined
                     : Icons.light_mode_outlined,
-                title: 'Theme',
-                value: isDarkMode ? 'Dark' : 'Light',
+                title: context.tr('Theme'),
+                value: context.tr(isDarkMode ? 'Dark' : 'Light'),
                 onTap: onToggleTheme,
               ),
-              const _SettingsTile(
+              _SettingsTile(
                 icon: Icons.language_rounded,
-                title: 'Language',
-                value: 'English',
+                title: context.tr('Language'),
+                value: context.tr(
+                  locale.languageCode == 'vi' ? 'Vietnamese' : 'English',
+                ),
+                onTap: onLocaleChanged == null
+                    ? null
+                    : () => _showLanguagePicker(context),
               ),
-              const _SettingsTile(
+              _SettingsTile(
                 icon: Icons.notifications_active_outlined,
-                title: 'Notification Preferences',
+                title: context.tr('Notification Preferences'),
               ),
-              const _SettingsTile(
+              _SettingsTile(
                 icon: Icons.download_outlined,
-                title: 'Downloads',
+                title: context.tr('Downloads'),
               ),
             ],
           ),
           const SizedBox(height: 20),
-          const _SettingsGroup(
-            title: 'Support & Privacy',
+          _SettingsGroup(
+            title: context.tr('Support & Privacy'),
             children: [
               _SettingsTile(
                 icon: Icons.help_outline_rounded,
-                title: 'Help Center',
+                title: context.tr('Help Center'),
               ),
               _SettingsTile(
                 icon: Icons.shield_outlined,
-                title: 'Privacy Policy',
+                title: context.tr('Privacy Policy'),
               ),
               _SettingsTile(
                 icon: Icons.description_outlined,
-                title: 'Terms of Service',
+                title: context.tr('Terms of Service'),
               ),
             ],
           ),
@@ -228,7 +246,7 @@ class ProfileScreen extends StatelessWidget {
               side: BorderSide(color: scheme.error.withValues(alpha: 0.5)),
             ),
             icon: const Icon(Icons.logout_rounded),
-            label: const Text('Sign Out'),
+            label: Text(context.tr('Sign Out')),
           ),
         ],
       ),
@@ -247,26 +265,26 @@ class ProfileScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Personal Information',
+                context.tr('Personal Information'),
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
               const SizedBox(height: 18),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.badge_outlined),
-                title: const Text('Display name'),
+                title: Text(context.tr('Display name')),
                 subtitle: Text(user!.displayName),
               ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.alternate_email_rounded),
-                title: const Text('Username'),
+                title: Text(context.tr('Username')),
                 subtitle: Text(user!.username),
               ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.email_outlined),
-                title: const Text('Email'),
+                title: Text(context.tr('Email')),
                 subtitle: Text(user!.email),
               ),
             ],
@@ -276,46 +294,122 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _showLanguagePicker(BuildContext context) async {
+    final selected = await showModalBottomSheet<Locale>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                sheetContext.tr('Select language'),
+                style: Theme.of(sheetContext).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 14),
+              for (final option in const [Locale('en'), Locale('vi')])
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Card(
+                    child: ListTile(
+                      minTileHeight: 60,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      leading: Text(
+                        option.languageCode == 'vi' ? '🇻🇳' : '🇬🇧',
+                        style: const TextStyle(fontSize: 24),
+                      ),
+                      title: Text(
+                        sheetContext.tr(
+                          option.languageCode == 'vi'
+                              ? 'Vietnamese'
+                              : 'English',
+                        ),
+                      ),
+                      trailing: Icon(
+                        option.languageCode == locale.languageCode
+                            ? Icons.check_circle_rounded
+                            : Icons.radio_button_unchecked_rounded,
+                        color: option.languageCode == locale.languageCode
+                            ? Theme.of(sheetContext).colorScheme.primary
+                            : Theme.of(sheetContext).colorScheme.outline,
+                      ),
+                      onTap: () => Navigator.pop(sheetContext, option),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (selected != null && selected.languageCode != locale.languageCode) {
+      onLocaleChanged?.call(selected);
+      final selectedStrings = AppLocalizations(selected);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        InAppNotifications.information(
+          context,
+          title: selectedStrings.tr('Information'),
+          message: selectedStrings.tr(
+            selected.languageCode == 'vi'
+                ? 'Language changed to Vietnamese.'
+                : 'Language changed to English.',
+          ),
+        );
+      });
+    }
+  }
+
   Future<void> _showChangePassword(BuildContext context) async {
     final current = TextEditingController();
     final next = TextEditingController();
     var loading = false;
     String? error;
-    await showDialog<void>(
-      context: context,
+    await InAppModal.show<void>(
+      context,
       barrierDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setModalState) => AlertDialog(
-          title: const Text('Change Password'),
+      builder: (modalContext) => StatefulBuilder(
+        builder: (panelContext, setModalState) => InAppModalPanel(
+          title: panelContext.tr('Change Password'),
+          icon: Icons.lock_reset_rounded,
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: current,
                 obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Current password',
+                decoration: InputDecoration(
+                  labelText: panelContext.tr('Current password'),
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: next,
                 obscureText: true,
-                decoration: const InputDecoration(labelText: 'New password'),
+                decoration: InputDecoration(
+                  labelText: panelContext.tr('New password'),
+                ),
               ),
               if (error != null) ...[
                 const SizedBox(height: 10),
                 Text(
                   error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  style: TextStyle(
+                    color: Theme.of(panelContext).colorScheme.error,
+                  ),
                 ),
               ],
             ],
           ),
           actions: [
             TextButton(
-              onPressed: loading ? null : () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
+              onPressed: loading ? null : () => Navigator.pop(modalContext),
+              child: Text(panelContext.tr('Cancel')),
             ),
             FilledButton(
               onPressed: loading
@@ -323,8 +417,9 @@ class ProfileScreen extends StatelessWidget {
                   : () async {
                       if (next.text.length < 6) {
                         setModalState(
-                          () => error =
-                              'New password must have at least 6 characters.',
+                          () => error = panelContext.tr(
+                            'New password must have at least 6 characters.',
+                          ),
                         );
                         return;
                       }
@@ -337,16 +432,18 @@ class ProfileScreen extends StatelessWidget {
                           currentPassword: current.text,
                           newPassword: next.text,
                         );
-                        if (dialogContext.mounted) Navigator.pop(dialogContext);
+                        if (modalContext.mounted) Navigator.pop(modalContext);
                         if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Password updated.')),
+                          InAppNotifications.success(
+                            context,
+                            title: context.tr('Success'),
+                            message: context.tr('Password updated.'),
                           );
                         }
                       } catch (exception) {
                         setModalState(() {
                           loading = false;
-                          error = exception.toString();
+                          error = panelContext.localizedError(exception);
                         });
                       }
                     },
@@ -355,7 +452,7 @@ class ProfileScreen extends StatelessWidget {
                       dimension: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text('Update'),
+                  : Text(panelContext.tr('Update')),
             ),
           ],
         ),
@@ -366,25 +463,17 @@ class ProfileScreen extends StatelessWidget {
   }
 
   Future<void> _confirmSignOut(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await InAppModal.confirm(
+      context,
+      title: context.tr('Sign out?'),
+      message: context.tr('Your current session will be closed.'),
+      cancelLabel: context.tr('Cancel'),
+      confirmLabel: context.tr('Sign Out'),
+      destructive: true,
+      icon: Icons.logout_rounded,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Sign out?'),
-        content: const Text('Your current session will be closed.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Sign Out'),
-          ),
-        ],
-      ),
     );
-    if (confirmed == true) onSignOut();
+    if (confirmed) onSignOut();
   }
 
   String _formatDate(DateTime value) =>

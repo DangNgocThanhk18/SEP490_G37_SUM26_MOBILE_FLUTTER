@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/app_notification.dart';
 import '../services/api_client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/in_app_notification.dart';
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({
@@ -158,9 +160,11 @@ class _NotificationsScreenState extends State<NotificationsScreen>
 
   void _showError(Object error) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
+    InAppNotifications.error(
       context,
-    ).showSnackBar(SnackBar(content: Text(error.toString())));
+      title: context.tr('Error'),
+      message: context.localizedError(error),
+    );
   }
 
   @override
@@ -168,22 +172,23 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     super.build(context);
     if (widget.isGuest) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Notifications')),
+        appBar: AppBar(title: Text(context.tr('Notifications'))),
         body: EmptyState(
           icon: Icons.notifications_off_outlined,
-          message:
-              'Sign in to receive chapter updates and account notifications.',
-          actionLabel: 'Sign in',
+          message: context.tr(
+            'Sign in to receive chapter updates and account notifications.',
+          ),
+          actionLabel: context.tr('Sign in'),
           onAction: widget.onSignIn,
         ),
       );
     }
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Notifications'),
+        title: Text(context.tr('Notifications')),
         actions: [
           IconButton(
-            tooltip: 'Mark all as read',
+            tooltip: context.tr('Mark all as read'),
             onPressed: _markAllBusy || !_items.any((item) => !item.isRead)
                 ? null
                 : _markAll,
@@ -234,7 +239,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
                       child: ChoiceChip(
-                        label: Text(option.$2),
+                        label: Text(context.tr(option.$2)),
                         selected: _filter == option.$1,
                         onSelected: (_) => setState(() => _filter = option.$1),
                       ),
@@ -244,11 +249,11 @@ class _NotificationsScreenState extends State<NotificationsScreen>
             ),
           ),
           if (items.isEmpty)
-            const SliverFillRemaining(
+            SliverFillRemaining(
               hasScrollBody: false,
               child: EmptyState(
                 icon: Icons.notifications_none_rounded,
-                message: 'No notifications in this category.',
+                message: context.tr('No notifications in this category.'),
               ),
             )
           else
@@ -278,9 +283,9 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       }
     }
     return [
-      if (today.isNotEmpty) ..._group('Today', today),
-      if (week.isNotEmpty) ..._group('Earlier This Week', week),
-      if (older.isNotEmpty) ..._group('Older', older),
+      if (today.isNotEmpty) ..._group(context.tr('Today'), today),
+      if (week.isNotEmpty) ..._group(context.tr('Earlier This Week'), week),
+      if (older.isNotEmpty) ..._group(context.tr('Older'), older),
     ];
   }
 
@@ -381,7 +386,7 @@ class _NotificationRow extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          _timeAgo(item.createdAt),
+                          _timeAgo(context, item.createdAt),
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
@@ -399,7 +404,7 @@ class _NotificationRow extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            'Open',
+                            context.tr('Open'),
                             style: Theme.of(context).textTheme.labelMedium
                                 ?.copyWith(color: scheme.primary),
                           ),
@@ -441,13 +446,19 @@ class _NotificationRow extends StatelessWidget {
     return (Icons.campaign_outlined, Theme.of(context).colorScheme.primary);
   }
 
-  String _timeAgo(DateTime? value) {
+  String _timeAgo(BuildContext context, DateTime? value) {
     if (value == null) return '';
     final difference = DateTime.now().difference(value.toLocal());
-    if (difference.inMinutes < 1) return 'Now';
-    if (difference.inHours < 1) return '${difference.inMinutes}m';
-    if (difference.inDays < 1) return '${difference.inHours}h';
-    if (difference.inDays < 7) return '${difference.inDays}d';
+    if (difference.inMinutes < 1) return context.tr('Now');
+    if (difference.inHours < 1) {
+      return context.tr('{count}m', values: {'count': difference.inMinutes});
+    }
+    if (difference.inDays < 1) {
+      return context.tr('{count}h', values: {'count': difference.inHours});
+    }
+    if (difference.inDays < 7) {
+      return context.tr('{count}d', values: {'count': difference.inDays});
+    }
     return '${value.day}/${value.month}';
   }
 }

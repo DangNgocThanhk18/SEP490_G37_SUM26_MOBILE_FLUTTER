@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/comic.dart';
 import '../theme/app_theme.dart';
 
@@ -206,7 +207,9 @@ class ComicCoverCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    comic.genres.isEmpty ? 'Comic' : comic.genres.first,
+                    comic.genres.isEmpty
+                        ? context.tr('Comic')
+                        : comic.genres.first,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(
@@ -216,7 +219,10 @@ class ComicCoverCard extends StatelessWidget {
                 ),
                 if (showChapter && comic.latestChapterNumber != null)
                   Text(
-                    'Ch. ${comic.latestChapterNumber}',
+                    context.tr(
+                      'Ch. {number}',
+                      values: {'number': comic.latestChapterNumber},
+                    ),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
               ],
@@ -273,8 +279,8 @@ class ComicListRow extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${comic.genres.isEmpty ? 'Comic' : comic.genres.first}'
-                    '${comic.viewCount == null ? '' : ' · ${compactNumber(comic.viewCount!)} views'}',
+                    '${comic.genres.isEmpty ? context.tr('Comic') : comic.genres.first}'
+                    '${comic.viewCount == null ? '' : ' · ${context.tr('{count} views', values: {'count': compactNumber(comic.viewCount!)})}'}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -338,8 +344,8 @@ class ApiErrorState extends StatelessWidget {
   Widget build(BuildContext context) {
     return EmptyState(
       icon: Icons.cloud_off_rounded,
-      message: error.toString(),
-      actionLabel: 'Retry',
+      message: context.localizedError(error),
+      actionLabel: context.tr('Retry'),
       onAction: onRetry,
     );
   }

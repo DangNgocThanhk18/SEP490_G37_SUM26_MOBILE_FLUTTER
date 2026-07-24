@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/comic.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
@@ -108,12 +109,14 @@ class _HomeScreenState extends State<HomeScreen>
         ),
         actions: [
           IconButton(
-            tooltip: 'Explore comics',
+            tooltip: context.tr('Explore comics'),
             onPressed: widget.onOpenExplore,
             icon: const Icon(Icons.search_rounded),
           ),
           IconButton(
-            tooltip: widget.isDarkMode ? 'Use light mode' : 'Use dark mode',
+            tooltip: context.tr(
+              widget.isDarkMode ? 'Use light mode' : 'Use dark mode',
+            ),
             onPressed: widget.onToggleTheme,
             icon: Icon(
               widget.isDarkMode
@@ -161,12 +164,12 @@ class _HomeScreenState extends State<HomeScreen>
                 data.updated.firstOrNull;
             if (featured == null) {
               return ListView(
-                children: const [
+                children: [
                   SizedBox(
                     height: 500,
                     child: EmptyState(
                       icon: Icons.auto_stories_outlined,
-                      message: 'No published comics yet.',
+                      message: context.tr('No published comics yet.'),
                     ),
                   ),
                 ],
@@ -186,7 +189,7 @@ class _HomeScreenState extends State<HomeScreen>
                 if (data.history.isNotEmpty) ...[
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
-                    child: const SectionHeader(title: 'Continue Reading'),
+                    child: SectionHeader(title: context.tr('Continue Reading')),
                   ),
                   SizedBox(
                     height: 140,
@@ -208,8 +211,8 @@ class _HomeScreenState extends State<HomeScreen>
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 24, 16, 10),
                   child: SectionHeader(
-                    title: 'Recommended for You',
-                    actionLabel: 'View all',
+                    title: context.tr('Recommended for You'),
+                    actionLabel: context.tr('View all'),
                     onAction: widget.onOpenExplore,
                   ),
                 ),
@@ -234,9 +237,9 @@ class _HomeScreenState extends State<HomeScreen>
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 22, 16, 4),
                   child: SectionHeader(
-                    title: 'Trending Now',
+                    title: context.tr('Trending Now'),
                     icon: Icons.trending_up_rounded,
-                    actionLabel: 'Ranking',
+                    actionLabel: context.tr('Ranking'),
                     onAction: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
@@ -274,7 +277,7 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
-                  child: const SectionHeader(title: 'New Updates'),
+                  child: SectionHeader(title: context.tr('New Updates')),
                 ),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -410,7 +413,8 @@ class _FeaturedComic extends StatelessWidget {
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            comic.ratingAverage?.toStringAsFixed(1) ?? 'New',
+                            comic.ratingAverage?.toStringAsFixed(1) ??
+                                context.tr('New'),
                             style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w700,
@@ -422,7 +426,10 @@ class _FeaturedComic extends StatelessWidget {
                               style: TextStyle(color: Colors.white70),
                             ),
                             Text(
-                              '${comic.chapterCount} chapters',
+                              context.tr(
+                                '{count} chapters',
+                                values: {'count': comic.chapterCount},
+                              ),
                               style: const TextStyle(color: Colors.white70),
                             ),
                           ],
@@ -445,8 +452,11 @@ class _FeaturedComic extends StatelessWidget {
                         width: double.infinity,
                         child: PrimaryGradientButton(
                           label: comic.latestChapterNumber == null
-                              ? 'View Comic'
-                              : 'Read Chapter ${comic.latestChapterNumber}',
+                              ? context.tr('View Comic')
+                              : context.tr(
+                                  'Read Chapter {number}',
+                                  values: {'number': comic.latestChapterNumber},
+                                ),
                           icon: Icons.menu_book_rounded,
                           onPressed: onTap,
                         ),
@@ -504,8 +514,11 @@ class _ContinueCard extends StatelessWidget {
                       const SizedBox(height: 6),
                       Text(
                         comic.latestChapterNumber == null
-                            ? 'Continue reading'
-                            : 'Latest: Ch. ${comic.latestChapterNumber}',
+                            ? context.tr('Continue reading')
+                            : context.tr(
+                                'Latest: Ch. {number}',
+                                values: {'number': comic.latestChapterNumber},
+                              ),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       const SizedBox(height: 14),

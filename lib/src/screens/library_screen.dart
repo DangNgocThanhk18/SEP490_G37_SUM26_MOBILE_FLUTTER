@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/comic.dart';
 import '../services/api_client.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/in_app_notification.dart';
 import 'comic_detail_screen.dart';
 
 class LibraryScreen extends StatefulWidget {
@@ -70,29 +72,25 @@ class _LibraryScreenState extends State<LibraryScreen>
   }
 
   Future<void> _remove(Comic comic) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await InAppModal.confirm(
+      context,
+      title: context.tr('Remove comic?'),
+      message: _tab == 2
+          ? context.tr(
+              'Remove “{title}” from your reading history?',
+              values: {'title': comic.title},
+            )
+          : context.tr(
+              'Remove “{title}” from this library list?',
+              values: {'title': comic.title},
+            ),
+      confirmLabel: context.tr('Remove'),
+      cancelLabel: context.tr('Cancel'),
+      destructive: true,
+      icon: Icons.delete_outline_rounded,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Remove comic?'),
-        content: Text(
-          _tab == 2
-              ? 'Remove “${comic.title}” from your reading history?'
-              : 'Remove “${comic.title}” from this library list?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
     );
-    if (confirmed != true) return;
+    if (!confirmed) return;
     try {
       if (_tab == 0) {
         await widget.apiClient.toggleSaved(comic.id);
@@ -102,16 +100,20 @@ class _LibraryScreenState extends State<LibraryScreen>
         await widget.apiClient.deleteReadingHistory(comic.id);
       }
       if (mounted) {
-        ScaffoldMessenger.of(
+        InAppNotifications.success(
           context,
-        ).showSnackBar(const SnackBar(content: Text('Removed from library.')));
+          title: context.tr('Success'),
+          message: context.tr('Removed from library.'),
+        );
         _reload();
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
+        InAppNotifications.error(
           context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
+          title: context.tr('Error'),
+          message: context.localizedError(error),
+        );
       }
     }
   }
@@ -132,22 +134,23 @@ class _LibraryScreenState extends State<LibraryScreen>
     super.build(context);
     if (widget.isGuest) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Library')),
+        appBar: AppBar(title: Text(context.tr('Library'))),
         body: EmptyState(
           icon: Icons.lock_outline_rounded,
-          message:
-              'Sign in to sync saved comics, favorites, and reading history.',
-          actionLabel: 'Sign in',
+          message: context.tr(
+            'Sign in to sync saved comics, favorites, and reading history.',
+          ),
+          actionLabel: context.tr('Sign in'),
           onAction: widget.onSignIn,
         ),
       );
     }
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Library'),
+        title: Text(context.tr('Library')),
         actions: [
           IconButton(
-            tooltip: 'Explore comics',
+            tooltip: context.tr('Explore comics'),
             onPressed: widget.onExplore,
             icon: const Icon(Icons.search_rounded),
           ),
@@ -178,7 +181,9 @@ class _LibraryScreenState extends State<LibraryScreen>
                         ),
                       ),
                       child: Text(
-                        const ['Saved', 'Favorites', 'History'][index],
+                        context.tr(
+                          const ['Saved', 'Favorites', 'History'][index],
+                        ),
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           color: _tab == index
@@ -212,8 +217,8 @@ class _LibraryScreenState extends State<LibraryScreen>
                   : _tab == 1
                   ? Icons.favorite_outline_rounded
                   : Icons.bookmark_outline_rounded,
-              message: 'This library section is empty.',
-              actionLabel: 'Explore comics',
+              message: context.tr('This library section is empty.'),
+              actionLabel: context.tr('Explore comics'),
               onAction: widget.onExplore,
             );
           }
@@ -226,7 +231,9 @@ class _LibraryScreenState extends State<LibraryScreen>
                   padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
                   sliver: SliverToBoxAdapter(
                     child: SectionHeader(
-                      title: _tab == 2 ? 'Continue Reading' : 'Your Collection',
+                      title: context.tr(
+                        _tab == 2 ? 'Continue Reading' : 'Your Collection',
+                      ),
                     ),
                   ),
                 ),
@@ -264,8 +271,15 @@ class _LibraryScreenState extends State<LibraryScreen>
                                   const SizedBox(height: 6),
                                   Text(
                                     source.first.latestChapterNumber == null
-                                        ? 'Ready to read'
-                                        : 'Latest chapter ${source.first.latestChapterNumber}',
+                                        ? context.tr('Ready to read')
+                                        : context.tr(
+                                            'Latest chapter {number}',
+                                            values: {
+                                              'number': source
+                                                  .first
+                                                  .latestChapterNumber,
+                                            },
+                                          ),
                                   ),
                                   const SizedBox(height: 12),
                                   const LinearProgressIndicator(value: 0.45),
@@ -274,7 +288,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                             ),
                             const SizedBox(width: 10),
                             IconButton.filled(
-                              tooltip: 'Continue reading',
+                              tooltip: context.tr('Continue reading'),
                               onPressed: () => _openComic(source.first),
                               icon: const Icon(Icons.play_arrow_rounded),
                             ),
@@ -297,7 +311,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                         Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: ChoiceChip(
-                            label: const Text('All'),
+                            label: Text(context.tr('All')),
                             selected: _genre == null,
                             onSelected: (_) => setState(() => _genre = null),
                           ),
@@ -315,18 +329,18 @@ class _LibraryScreenState extends State<LibraryScreen>
                         DropdownButton<String>(
                           value: _sort,
                           underline: const SizedBox.shrink(),
-                          items: const [
+                          items: [
                             DropdownMenuItem(
                               value: 'recent',
-                              child: Text('Recent'),
+                              child: Text(context.tr('Recent')),
                             ),
                             DropdownMenuItem(
                               value: 'title',
-                              child: Text('Title'),
+                              child: Text(context.tr('Title')),
                             ),
                             DropdownMenuItem(
                               value: 'updated',
-                              child: Text('Updated'),
+                              child: Text(context.tr('Updated')),
                             ),
                           ],
                           onChanged: (value) {
@@ -338,10 +352,10 @@ class _LibraryScreenState extends State<LibraryScreen>
                   ),
                 ),
                 if (comics.isEmpty)
-                  const SliverFillRemaining(
+                  SliverFillRemaining(
                     child: EmptyState(
                       icon: Icons.filter_alt_off_rounded,
-                      message: 'No comics match this filter.',
+                      message: context.tr('No comics match this filter.'),
                     ),
                   )
                 else
@@ -381,7 +395,7 @@ class _LibraryScreenState extends State<LibraryScreen>
                                   top: 4,
                                   right: 4,
                                   child: IconButton.filledTonal(
-                                    tooltip: 'Remove from library',
+                                    tooltip: context.tr('Remove from library'),
                                     onPressed: () => _remove(comic),
                                     icon: const Icon(
                                       Icons.more_horiz_rounded,

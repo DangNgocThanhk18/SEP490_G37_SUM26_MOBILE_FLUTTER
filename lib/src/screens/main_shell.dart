@@ -2,12 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/app_notification.dart';
 import '../models/chapter.dart';
 import '../models/comic.dart';
 import '../models/notification_destination.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
+import '../widgets/in_app_notification.dart';
 import 'comic_detail_screen.dart';
 import 'explore_screen.dart';
 import 'forum_thread_screen.dart';
@@ -26,6 +28,8 @@ class MainShell extends StatefulWidget {
     required this.onSignOut,
     required this.onToggleTheme,
     required this.isDarkMode,
+    this.locale = const Locale('en'),
+    this.onLocaleChanged,
   });
 
   final ApiClient apiClient;
@@ -33,6 +37,8 @@ class MainShell extends StatefulWidget {
   final VoidCallback onSignOut;
   final VoidCallback onToggleTheme;
   final bool isDarkMode;
+  final Locale locale;
+  final ValueChanged<Locale>? onLocaleChanged;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -147,7 +153,10 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         );
         return;
       case NotificationDestinationType.unsupported:
-        _showMessage('This notification is available in the web workspace.');
+        _showMessage(
+          context.tr('This notification is available in the web workspace.'),
+          type: InAppNotificationType.information,
+        );
         return;
     }
   }
@@ -160,7 +169,8 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
       if (!mounted) return;
       await _push(ComicDetailScreen(apiClient: widget.apiClient, comic: comic));
     } catch (error) {
-      _showMessage(error.toString());
+      if (!mounted) return;
+      _showMessage(context.localizedError(error));
     }
   }
 
@@ -172,13 +182,13 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           widget.apiClient.getChapters(comicId),
         ]),
       );
+      if (!mounted) return;
       final comic = values[0] as Comic;
       final chapters = values[1] as List<ChapterLite>;
       final index = chapters.indexWhere((chapter) => chapter.id == chapterId);
       if (index < 0) {
-        throw const ApiException('This chapter is no longer available.');
+        throw ApiException(context.tr('This chapter is no longer available.'));
       }
-      if (!mounted) return;
       await _push(
         ReaderScreen(
           apiClient: widget.apiClient,
@@ -188,20 +198,22 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         ),
       );
     } catch (error) {
-      _showMessage(error.toString());
+      if (!mounted) return;
+      _showMessage(context.localizedError(error));
     }
   }
 
   Future<T> _withLoading<T>(Future<T> operation) async {
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final loadingRoute = InAppModal.showLoading(
+      context,
+      message: context.tr('Loading…'),
     );
     try {
       return await operation;
     } finally {
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      if (navigator.mounted) navigator.pop();
+      await loadingRoute;
     }
   }
 
@@ -212,11 +224,22 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     ).push(MaterialPageRoute<void>(builder: (_) => screen));
   }
 
-  void _showMessage(String message) {
+  void _showMessage(
+    String message, {
+    InAppNotificationType type = InAppNotificationType.error,
+  }) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
+    InAppNotifications.show(
       context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+      type: type,
+      title: context.tr(switch (type) {
+        InAppNotificationType.success => 'Success',
+        InAppNotificationType.error => 'Error',
+        InAppNotificationType.warning => 'Warning',
+        InAppNotificationType.information => 'Information',
+      }),
+      message: message,
+    );
   }
 
   @override
@@ -251,6 +274,8 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         onToggleTheme: widget.onToggleTheme,
         onOpenHistory: () => _goTo(2),
         onSignOut: widget.onSignOut,
+        locale: widget.locale,
+        onLocaleChanged: widget.onLocaleChanged,
       ),
     ];
 
@@ -260,20 +285,20 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         selectedIndex: _index,
         onDestinationSelected: _goTo,
         destinations: [
-          const NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_rounded),
-            label: 'Home',
+          NavigationDestination(
+            icon: const Icon(Icons.home_outlined),
+            selectedIcon: const Icon(Icons.home_rounded),
+            label: context.tr('Home'),
           ),
-          const NavigationDestination(
-            icon: Icon(Icons.explore_outlined),
-            selectedIcon: Icon(Icons.explore_rounded),
-            label: 'Explore',
+          NavigationDestination(
+            icon: const Icon(Icons.explore_outlined),
+            selectedIcon: const Icon(Icons.explore_rounded),
+            label: context.tr('Explore'),
           ),
-          const NavigationDestination(
-            icon: Icon(Icons.library_books_outlined),
-            selectedIcon: Icon(Icons.library_books_rounded),
-            label: 'Library',
+          NavigationDestination(
+            icon: const Icon(Icons.library_books_outlined),
+            selectedIcon: const Icon(Icons.library_books_rounded),
+            label: context.tr('Library'),
           ),
           NavigationDestination(
             icon: Badge(
@@ -286,12 +311,12 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
               label: Text(_unreadCount > 99 ? '99+' : '$_unreadCount'),
               child: const Icon(Icons.notifications_rounded),
             ),
-            label: 'Alerts',
+            label: context.tr('Alerts'),
           ),
-          const NavigationDestination(
-            icon: Icon(Icons.person_outline_rounded),
-            selectedIcon: Icon(Icons.person_rounded),
-            label: 'Profile',
+          NavigationDestination(
+            icon: const Icon(Icons.person_outline_rounded),
+            selectedIcon: const Icon(Icons.person_rounded),
+            label: context.tr('Profile'),
           ),
         ],
       ),

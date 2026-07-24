@@ -55,9 +55,16 @@ class ApiClient {
   final HttpClient _httpClient = HttpClient();
   String? _token;
   String? _refreshToken;
+  String _languageCode = 'en';
 
   bool get hasToken => _token != null && _token!.isNotEmpty;
   String? get refreshToken => _refreshToken;
+
+  void setLanguage(String languageCode) {
+    if (languageCode == 'en' || languageCode == 'vi') {
+      _languageCode = languageCode;
+    }
+  }
 
   Future<void> clearSession() async {
     _token = null;
@@ -361,6 +368,7 @@ class ApiClient {
       final request = await _httpClient.openUrl(method, uri).timeout(_timeout);
       request.headers.contentType = ContentType.json;
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      request.headers.set('Accept-Language', _languageCode);
       if (authorized && hasToken) {
         request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
       }

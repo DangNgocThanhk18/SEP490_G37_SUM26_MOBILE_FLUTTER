@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
 import '../theme/app_theme.dart';
@@ -52,10 +53,12 @@ class _LoginScreenState extends State<LoginScreen> {
         username: _usernameController.text.trim(),
         password: _passwordController.text,
       );
+      if (!mounted) return;
       widget.onSignedIn(result.user);
     } catch (err) {
+      if (!mounted) return;
       setState(() {
-        _error = err.toString();
+        _error = context.localizedError(err);
       });
     } finally {
       if (mounted) {
@@ -72,7 +75,9 @@ class _LoginScreenState extends State<LoginScreen> {
       appBar: AppBar(
         actions: [
           IconButton(
-            tooltip: widget.isDarkMode ? 'Use light mode' : 'Use dark mode',
+            tooltip: context.tr(
+              widget.isDarkMode ? 'Use light mode' : 'Use dark mode',
+            ),
             onPressed: widget.onToggleTheme,
             icon: Icon(
               widget.isDarkMode
@@ -98,13 +103,15 @@ class _LoginScreenState extends State<LoginScreen> {
               child: const Icon(Icons.auto_stories_rounded, size: 34),
             ),
             const SizedBox(height: 28),
-            const Text(
-              'Welcome back',
-              style: TextStyle(fontSize: 34, fontWeight: FontWeight.w800),
+            Text(
+              context.tr('Welcome back'),
+              style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
             Text(
-              'Sign in to sync your ComiVerse account, or continue as guest to read public comics.',
+              context.tr(
+                'Sign in to sync your ComiVerse account, or continue as guest to read public comics.',
+              ),
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
                 height: 1.45,
@@ -118,13 +125,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   TextFormField(
                     controller: _usernameController,
                     textInputAction: TextInputAction.next,
-                    decoration: const InputDecoration(
-                      labelText: 'Email or username',
-                      prefixIcon: Icon(Icons.person_outline_rounded),
+                    decoration: InputDecoration(
+                      labelText: context.tr('Email or username'),
+                      prefixIcon: const Icon(Icons.person_outline_rounded),
                     ),
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {
-                        return 'Enter your email or username';
+                        return context.tr('Enter your email or username');
                       }
                       return null;
                     },
@@ -135,7 +142,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     obscureText: _obscurePassword,
                     onFieldSubmitted: (_) => _submit(),
                     decoration: InputDecoration(
-                      labelText: 'Password',
+                      labelText: context.tr('Password'),
                       prefixIcon: const Icon(Icons.lock_outline_rounded),
                       suffixIcon: IconButton(
                         onPressed: () {
@@ -152,7 +159,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     validator: (value) {
                       if (value == null || value.isEmpty) {
-                        return 'Enter your password';
+                        return context.tr('Enter your password');
                       }
                       return null;
                     },
@@ -172,7 +179,7 @@ class _LoginScreenState extends State<LoginScreen> {
               width: double.infinity,
               height: 52,
               child: PrimaryGradientButton(
-                label: 'Sign In',
+                label: context.tr('Sign In'),
                 onPressed: _submit,
                 loading: _isLoading,
               ),
@@ -183,7 +190,7 @@ class _LoginScreenState extends State<LoginScreen> {
               style: OutlinedButton.styleFrom(
                 minimumSize: const Size.fromHeight(52),
               ),
-              child: const Text('Continue as Guest'),
+              child: Text(context.tr('Continue as Guest')),
             ),
             const SizedBox(height: 24),
             Text(

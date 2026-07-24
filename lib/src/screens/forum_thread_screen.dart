@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/forum.dart';
 import '../services/api_client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/in_app_notification.dart';
 
 class ForumThreadScreen extends StatefulWidget {
   const ForumThreadScreen({
@@ -66,10 +68,10 @@ class _ForumThreadScreenState extends State<ForumThreadScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (!targetExists) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('The referenced comment is unavailable.'),
-          ),
+        InAppNotifications.warning(
+          context,
+          title: context.tr('Warning'),
+          message: context.tr('The referenced comment is unavailable.'),
         );
         return;
       }
@@ -92,7 +94,7 @@ class _ForumThreadScreenState extends State<ForumThreadScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Discussion')),
+      appBar: AppBar(title: Text(context.tr('Discussion'))),
       body: FutureBuilder<_ForumThreadData>(
         future: _future,
         builder: (context, snapshot) {
@@ -123,7 +125,7 @@ class _ForumThreadScreenState extends State<ForumThreadScreen> {
                     child: Row(
                       children: [
                         Text(
-                          'Comments',
+                          context.tr('Comments'),
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                         const SizedBox(width: 8),
@@ -139,11 +141,13 @@ class _ForumThreadScreenState extends State<ForumThreadScreen> {
                   ),
                 ),
                 if (data.comments.isEmpty)
-                  const SliverFillRemaining(
+                  SliverFillRemaining(
                     hasScrollBody: false,
                     child: EmptyState(
                       icon: Icons.forum_outlined,
-                      message: 'No comments in this discussion yet.',
+                      message: context.tr(
+                        'No comments in this discussion yet.',
+                      ),
                     ),
                   )
                 else
@@ -236,9 +240,9 @@ class _ThreadHeader extends StatelessWidget {
               children: [
                 Chip(label: Text(thread.category)),
                 if (thread.isLocked)
-                  const Chip(
-                    avatar: Icon(Icons.lock_outline_rounded, size: 16),
-                    label: Text('Locked'),
+                  Chip(
+                    avatar: const Icon(Icons.lock_outline_rounded, size: 16),
+                    label: Text(context.tr('Locked')),
                   ),
               ],
             ),
@@ -261,7 +265,7 @@ class _ThreadHeader extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
                       Text(
-                        _formatDate(thread.createdAt),
+                        _formatDate(context, thread.createdAt),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
@@ -338,7 +342,7 @@ class _CommentCard extends StatelessWidget {
                 const SizedBox(width: 4),
               ],
               Text(
-                _formatDate(comment.createdAt),
+                _formatDate(context, comment.createdAt),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
@@ -417,20 +421,22 @@ class _ThreadedForumComment {
   final int depth;
 }
 
-String _formatDate(DateTime? value) {
+String _formatDate(BuildContext context, DateTime? value) {
   if (value == null) return '';
   final local = value.toLocal();
   final now = DateTime.now();
   final difference = now.difference(local);
-  if (!difference.isNegative && difference.inMinutes < 1) return 'Now';
+  if (!difference.isNegative && difference.inMinutes < 1) {
+    return context.tr('Now');
+  }
   if (!difference.isNegative && difference.inHours < 1) {
-    return '${difference.inMinutes}m';
+    return context.tr('{count}m', values: {'count': difference.inMinutes});
   }
   if (!difference.isNegative && difference.inDays < 1) {
-    return '${difference.inHours}h';
+    return context.tr('{count}h', values: {'count': difference.inHours});
   }
   if (!difference.isNegative && difference.inDays < 7) {
-    return '${difference.inDays}d';
+    return context.tr('{count}d', values: {'count': difference.inDays});
   }
   return '${local.day}/${local.month}/${local.year}';
 }
