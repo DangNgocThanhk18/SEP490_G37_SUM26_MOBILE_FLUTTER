@@ -36,14 +36,28 @@ class ApiClient {
     String? baseUrl,
     Duration timeout = const Duration(seconds: 20),
     SessionStorage? sessionStorage,
-  }) : baseUrl =
-           baseUrl ??
-           const String.fromEnvironment(
-             'API_BASE_URL',
-             defaultValue: 'http://192.168.1.6:8081/api',
-           ),
+  }) : baseUrl = resolveBaseUrl(baseUrl),
        _timeout = timeout,
        _sessionStorage = sessionStorage ?? const SecureSessionStorage();
+
+  static String resolveBaseUrl([String? override]) {
+    const configured = String.fromEnvironment('API_BASE_URL');
+    final provided = override?.trim();
+    final fromEnvironment = configured.trim();
+    late final String resolved;
+    if (provided?.isNotEmpty == true) {
+      resolved = provided!;
+    } else if (fromEnvironment.isNotEmpty) {
+      resolved = fromEnvironment;
+    } else if (Platform.isAndroid) {
+      resolved = 'http://10.0.2.2:8081/api';
+    } else {
+      resolved = 'http://localhost:8081/api';
+    }
+    return resolved.endsWith('/')
+        ? resolved.substring(0, resolved.length - 1)
+        : resolved;
+  }
 
   static const _accessTokenKey = 'comiverse_access_token';
   static const _refreshTokenKey = 'comiverse_refresh_token';

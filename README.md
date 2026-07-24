@@ -1,17 +1,51 @@
-# comiverse_mobile
+# ComiVerse Mobile
 
-A new Flutter project.
+Android-first Flutter reader application for ComiVerse.
 
-## Getting Started
+## Backend URL
 
-This project is a starting point for a Flutter application.
+The backend address is configured at build/run time with `API_BASE_URL`. Do not
+commit a developer machine's LAN IP to the source code.
 
-A few resources to get you started if this is your first Flutter project:
+### Android Emulator
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+The default URL is already configured for the Android Studio emulator:
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```powershell
+flutter run
+```
+
+It resolves to `http://10.0.2.2:8081/api`. On an Android emulator,
+`10.0.2.2` points to the computer running Spring Boot.
+
+### Physical Android Device
+
+The phone and development computer must be on the same network. Replace the
+example address with the computer's current IPv4 address:
+
+```powershell
+flutter run --dart-define=API_BASE_URL=http://192.168.1.20:8081/api
+```
+
+Spring Boot must listen on the LAN interface and the firewall must allow port
+`8081`. `localhost` on a physical phone refers to the phone itself, not the
+development computer.
+
+### Deployed Backend
+
+Use the public HTTPS API URL for a cloud build:
+
+```powershell
+flutter run --dart-define=API_BASE_URL=https://api.comiverse.example/api
+flutter build apk --release --dart-define=API_BASE_URL=https://api.comiverse.example/api
+```
+
+Each developer can use their own URL without changing tracked Dart files.
+
+## Verification
+
+```powershell
+flutter analyze
+flutter test
+flutter build apk --debug
+```
