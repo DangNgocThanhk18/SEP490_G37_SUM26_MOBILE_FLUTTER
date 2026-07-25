@@ -191,7 +191,7 @@ class ApiClient {
   Future<List<Comic>> getTopViewed({int size = 10}) async {
     final json = await _request(
       'GET',
-      '/comics/top-views?page=1&size=$size',
+      '/comics/explore?sortBy=${Uri.encodeQueryComponent('Total Views')}&size=$size',
       authorized: false,
     );
     return _parseComicPayload(_unwrapData(json));
@@ -200,7 +200,7 @@ class ApiClient {
   Future<List<Comic>> getRecentlyUpdated({int size = 10}) async {
     final json = await _request(
       'GET',
-      '/comics/recently-updated?page=1&size=$size',
+      '/comics/explore?sortBy=${Uri.encodeQueryComponent('Recently Updated')}&size=$size',
       authorized: false,
     );
     return _parseComicPayload(_unwrapData(json));
