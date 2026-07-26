@@ -6,6 +6,7 @@ class AppNotification {
     required this.type,
     required this.isRead,
     required this.createdAt,
+    this.actionUrl,
   });
 
   final String id;
@@ -14,6 +15,7 @@ class AppNotification {
   final String type;
   final bool isRead;
   final DateTime? createdAt;
+  final String? actionUrl;
 
   AppNotification copyWith({bool? isRead}) {
     return AppNotification(
@@ -23,6 +25,7 @@ class AppNotification {
       type: type,
       isRead: isRead ?? this.isRead,
       createdAt: createdAt,
+      actionUrl: actionUrl,
     );
   }
 
@@ -34,6 +37,12 @@ class AppNotification {
       type: (json['type'] ?? 'INFO').toString().toUpperCase(),
       isRead: json['isRead'] == true,
       createdAt: DateTime.tryParse((json['createdAt'] ?? '').toString()),
+      actionUrl: _optionalString(json['actionUrl']),
     );
+  }
+
+  static String? _optionalString(Object? value) {
+    final text = value?.toString().trim();
+    return text == null || text.isEmpty ? null : text;
   }
 }

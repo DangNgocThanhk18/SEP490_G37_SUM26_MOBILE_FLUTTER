@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/comic.dart';
 import '../theme/app_theme.dart';
 
@@ -49,7 +50,9 @@ class PrimaryGradientButton extends StatelessWidget {
                       Icon(icon, size: 20),
                       const SizedBox(width: 8),
                     ],
-                    Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+                    Flexible(
+                      child: Text(label, overflow: TextOverflow.ellipsis),
+                    ),
                   ],
                 ),
         ),
@@ -80,7 +83,9 @@ class SectionHeader extends StatelessWidget {
           Icon(icon, size: 20, color: context.cvColors.brandOrange),
           const SizedBox(width: 6),
         ],
-        Expanded(child: Text(title, style: Theme.of(context).textTheme.titleLarge)),
+        Expanded(
+          child: Text(title, style: Theme.of(context).textTheme.titleLarge),
+        ),
         if (actionLabel != null)
           TextButton(onPressed: onAction, child: Text(actionLabel!)),
       ],
@@ -108,7 +113,7 @@ class ComicCoverImage extends StatelessWidget {
     return Image.network(
       url!,
       fit: fit,
-      errorBuilder: (_, __, ___) => placeholder,
+      errorBuilder: (_, _, _) => placeholder,
       loadingBuilder: (context, child, progress) {
         if (progress == null) return child;
         return ColoredBox(
@@ -202,17 +207,22 @@ class ComicCoverCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    comic.genres.isEmpty ? 'Comic' : comic.genres.first,
+                    comic.genres.isEmpty
+                        ? context.tr('Comic')
+                        : comic.genres.first,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: scheme.primary,
-                        ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: scheme.primary),
                   ),
                 ),
                 if (showChapter && comic.latestChapterNumber != null)
                   Text(
-                    'Ch. ${comic.latestChapterNumber}',
+                    context.tr(
+                      'Ch. {number}',
+                      values: {'number': comic.latestChapterNumber},
+                    ),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
               ],
@@ -269,13 +279,13 @@ class ComicListRow extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${comic.genres.isEmpty ? 'Comic' : comic.genres.first}'
-                    '${comic.viewCount == null ? '' : ' · ${compactNumber(comic.viewCount!)} views'}',
+                    '${comic.genres.isEmpty ? context.tr('Comic') : comic.genres.first}'
+                    '${comic.viewCount == null ? '' : ' · ${context.tr('{count} views', values: {'count': compactNumber(comic.viewCount!)})}'}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
@@ -334,8 +344,8 @@ class ApiErrorState extends StatelessWidget {
   Widget build(BuildContext context) {
     return EmptyState(
       icon: Icons.cloud_off_rounded,
-      message: error.toString(),
-      actionLabel: 'Retry',
+      message: context.localizedError(error),
+      actionLabel: context.tr('Retry'),
       onAction: onRetry,
     );
   }

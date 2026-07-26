@@ -13,7 +13,8 @@ class PremiumPlanSettings {
     return PremiumPlanSettings(
       monthlyPrice: _asDouble(json['monthlyPrice']),
       yearlyPrice: _asDouble(json['yearlyPrice']),
-      benefits: (json['benefits'] as List?)
+      benefits:
+          (json['benefits'] as List?)
               ?.map((item) => item.toString())
               .where((item) => item.trim().isNotEmpty)
               .toList() ??

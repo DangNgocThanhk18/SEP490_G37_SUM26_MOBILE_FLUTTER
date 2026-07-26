@@ -1,12 +1,24 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
+import '../models/app_notification.dart';
+import '../models/chapter.dart';
+import '../models/comic.dart';
+import '../models/notification_destination.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
+import '../widgets/in_app_notification.dart';
+import 'comic_detail_screen.dart';
 import 'explore_screen.dart';
+import 'forum_thread_screen.dart';
 import 'home_screen.dart';
 import 'library_screen.dart';
 import 'notifications_screen.dart';
+import 'premium_screen.dart';
 import 'profile_screen.dart';
+import 'reader_screen.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({
@@ -16,6 +28,11 @@ class MainShell extends StatefulWidget {
     required this.onSignOut,
     required this.onToggleTheme,
     required this.isDarkMode,
+    this.themeMode = ThemeMode.system,
+    this.onThemeModeChanged,
+    this.locale = const Locale('en'),
+    this.onLocaleChanged,
+    this.onUserChanged,
   });
 
   final ApiClient apiClient;
@@ -23,34 +40,223 @@ class MainShell extends StatefulWidget {
   final VoidCallback onSignOut;
   final VoidCallback onToggleTheme;
   final bool isDarkMode;
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode>? onThemeModeChanged;
+  final Locale locale;
+  final ValueChanged<Locale>? onLocaleChanged;
+  final ValueChanged<UserProfile>? onUserChanged;
 
   @override
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _index = 0;
   int _unreadCount = 0;
+  int _notificationRefreshSignal = 0;
+  Timer? _notificationTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadUnreadCount();
+    _startNotificationPolling();
+  }
+
+  @override
+  void dispose() {
+    _notificationTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _startNotificationPolling();
+      _refreshNotifications(refreshList: _index == 3);
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      _notificationTimer?.cancel();
+      _notificationTimer = null;
+    }
+  }
+
+  void _startNotificationPolling() {
+    _notificationTimer?.cancel();
+    if (!widget.apiClient.hasToken) return;
+    _notificationTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _loadUnreadCount(),
+    );
   }
 
   Future<void> _loadUnreadCount() async {
-    if (!widget.apiClient.hasToken) return;
+    if (!widget.apiClient.hasToken) {
+      if (mounted && _unreadCount != 0) {
+        setState(() => _unreadCount = 0);
+      }
+      return;
+    }
     try {
       final count = await widget.apiClient.getUnreadNotificationCount();
-      if (mounted) setState(() => _unreadCount = count);
+      if (mounted && count != _unreadCount) {
+        setState(() => _unreadCount = count);
+      }
     } catch (_) {
       // The destination remains usable and exposes its own retry state.
     }
   }
 
   void _goTo(int index) {
-    setState(() => _index = index);
+    setState(() {
+      _index = index;
+      if (index == 3) _notificationRefreshSignal++;
+    });
     if (index == 3) _loadUnreadCount();
+  }
+
+  Future<void> _refreshNotifications({required bool refreshList}) async {
+    if (refreshList && mounted) {
+      setState(() => _notificationRefreshSignal++);
+    }
+    await _loadUnreadCount();
+  }
+
+  void _setUnreadCount(int count) {
+    if (mounted && count != _unreadCount) {
+      setState(() => _unreadCount = count);
+    }
+  }
+
+  Future<void> _openNotification(AppNotification notification) async {
+    final destination = NotificationDestination.parse(notification.actionUrl);
+    switch (destination.type) {
+      case NotificationDestinationType.none:
+        return;
+      case NotificationDestinationType.home:
+        _goTo(0);
+        return;
+      case NotificationDestinationType.explore:
+        _goTo(1);
+        return;
+      case NotificationDestinationType.library:
+        _goTo(2);
+        return;
+      case NotificationDestinationType.profile:
+        _goTo(4);
+        return;
+      case NotificationDestinationType.premium:
+        final user = widget.user;
+        if (user == null) return;
+        await _push(PremiumScreen(apiClient: widget.apiClient, user: user));
+        return;
+      case NotificationDestinationType.comic:
+        await _openComic(destination.comicId!);
+        return;
+      case NotificationDestinationType.chapter:
+        await _openChapter(destination.comicId!, destination.chapterId!);
+        return;
+      case NotificationDestinationType.forumThread:
+        await _push(
+          ForumThreadScreen(
+            apiClient: widget.apiClient,
+            threadId: destination.threadId!,
+            highlightCommentId: destination.commentId,
+          ),
+        );
+        return;
+      case NotificationDestinationType.unsupported:
+        _showMessage(
+          context.tr('This notification is available in the web workspace.'),
+          type: InAppNotificationType.information,
+        );
+        return;
+    }
+  }
+
+  Future<void> _openComic(String comicId) async {
+    try {
+      final comic = await _withLoading(
+        widget.apiClient.getComicDetail(comicId),
+      );
+      if (!mounted) return;
+      await _push(ComicDetailScreen(apiClient: widget.apiClient, comic: comic));
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(context.localizedError(error));
+    }
+  }
+
+  Future<void> _openChapter(String comicId, String chapterId) async {
+    try {
+      final values = await _withLoading(
+        Future.wait([
+          widget.apiClient.getComicDetail(comicId),
+          widget.apiClient.getChapters(comicId),
+        ]),
+      );
+      if (!mounted) return;
+      final comic = values[0] as Comic;
+      final chapters = values[1] as List<ChapterLite>;
+      final index = chapters.indexWhere((chapter) => chapter.id == chapterId);
+      if (index < 0) {
+        throw ApiException(context.tr('This chapter is no longer available.'));
+      }
+      await _push(
+        ReaderScreen(
+          apiClient: widget.apiClient,
+          chapters: chapters,
+          initialIndex: index,
+          comicTitle: comic.title,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(context.localizedError(error));
+    }
+  }
+
+  Future<T> _withLoading<T>(Future<T> operation) async {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final loadingRoute = InAppModal.showLoading(
+      context,
+      message: context.tr('Loading…'),
+    );
+    try {
+      return await operation;
+    } finally {
+      if (navigator.mounted) navigator.pop();
+      await loadingRoute;
+    }
+  }
+
+  Future<void> _push(Widget screen) async {
+    if (!mounted) return;
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => screen));
+  }
+
+  void _showMessage(
+    String message, {
+    InAppNotificationType type = InAppNotificationType.error,
+  }) {
+    if (!mounted) return;
+    InAppNotifications.show(
+      context,
+      type: type,
+      title: context.tr(switch (type) {
+        InAppNotificationType.success => 'Success',
+        InAppNotificationType.error => 'Error',
+        InAppNotificationType.warning => 'Warning',
+        InAppNotificationType.information => 'Information',
+      }),
+      message: message,
+    );
   }
 
   @override
@@ -74,9 +280,9 @@ class _MainShellState extends State<MainShell> {
         apiClient: widget.apiClient,
         isGuest: !widget.apiClient.hasToken,
         onSignIn: widget.onSignOut,
-        onUnreadChanged: (count) {
-          if (mounted) setState(() => _unreadCount = count);
-        },
+        onUnreadChanged: _setUnreadCount,
+        onOpenNotification: _openNotification,
+        refreshSignal: _notificationRefreshSignal,
       ),
       ProfileScreen(
         apiClient: widget.apiClient,
@@ -85,49 +291,60 @@ class _MainShellState extends State<MainShell> {
         onToggleTheme: widget.onToggleTheme,
         onOpenHistory: () => _goTo(2),
         onSignOut: widget.onSignOut,
+        locale: widget.locale,
+        onLocaleChanged: widget.onLocaleChanged,
+        themeMode: widget.themeMode,
+        onThemeModeChanged: widget.onThemeModeChanged,
+        onUserChanged: widget.onUserChanged,
       ),
     ];
 
-    return Scaffold(
-      body: IndexedStack(index: _index, children: pages),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: _goTo,
-        destinations: [
-          const NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_rounded),
-            label: 'Home',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.explore_outlined),
-            selectedIcon: Icon(Icons.explore_rounded),
-            label: 'Explore',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.library_books_outlined),
-            selectedIcon: Icon(Icons.library_books_rounded),
-            label: 'Library',
-          ),
-          NavigationDestination(
-            icon: Badge(
-              isLabelVisible: _unreadCount > 0,
-              label: Text(_unreadCount > 99 ? '99+' : '$_unreadCount'),
-              child: const Icon(Icons.notifications_outlined),
+    return PopScope(
+      canPop: _index == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _index != 0) _goTo(0);
+      },
+      child: Scaffold(
+        body: IndexedStack(index: _index, children: pages),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _index,
+          onDestinationSelected: _goTo,
+          destinations: [
+            NavigationDestination(
+              icon: const Icon(Icons.home_outlined),
+              selectedIcon: const Icon(Icons.home_rounded),
+              label: context.tr('Home'),
             ),
-            selectedIcon: Badge(
-              isLabelVisible: _unreadCount > 0,
-              label: Text(_unreadCount > 99 ? '99+' : '$_unreadCount'),
-              child: const Icon(Icons.notifications_rounded),
+            NavigationDestination(
+              icon: const Icon(Icons.explore_outlined),
+              selectedIcon: const Icon(Icons.explore_rounded),
+              label: context.tr('Explore'),
             ),
-            label: 'Notifications',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.person_outline_rounded),
-            selectedIcon: Icon(Icons.person_rounded),
-            label: 'Profile',
-          ),
-        ],
+            NavigationDestination(
+              icon: const Icon(Icons.library_books_outlined),
+              selectedIcon: const Icon(Icons.library_books_rounded),
+              label: context.tr('Library'),
+            ),
+            NavigationDestination(
+              icon: Badge(
+                isLabelVisible: _unreadCount > 0,
+                label: Text(_unreadCount > 99 ? '99+' : '$_unreadCount'),
+                child: const Icon(Icons.notifications_outlined),
+              ),
+              selectedIcon: Badge(
+                isLabelVisible: _unreadCount > 0,
+                label: Text(_unreadCount > 99 ? '99+' : '$_unreadCount'),
+                child: const Icon(Icons.notifications_rounded),
+              ),
+              label: context.tr('Alerts'),
+            ),
+            NavigationDestination(
+              icon: const Icon(Icons.person_outline_rounded),
+              selectedIcon: const Icon(Icons.person_rounded),
+              label: context.tr('Profile'),
+            ),
+          ],
+        ),
       ),
     );
   }

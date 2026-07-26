@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
+import '../theme/app_theme.dart';
+import '../widgets/common_widgets.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({
@@ -50,10 +53,12 @@ class _LoginScreenState extends State<LoginScreen> {
         username: _usernameController.text.trim(),
         password: _passwordController.text,
       );
+      if (!mounted) return;
       widget.onSignedIn(result.user);
     } catch (err) {
+      if (!mounted) return;
       setState(() {
-        _error = err.toString();
+        _error = context.localizedError(err);
       });
     } finally {
       if (mounted) {
@@ -70,7 +75,9 @@ class _LoginScreenState extends State<LoginScreen> {
       appBar: AppBar(
         actions: [
           IconButton(
-            tooltip: widget.isDarkMode ? 'Use light mode' : 'Use dark mode',
+            tooltip: context.tr(
+              widget.isDarkMode ? 'Use light mode' : 'Use dark mode',
+            ),
             onPressed: widget.onToggleTheme,
             icon: Icon(
               widget.isDarkMode
@@ -81,123 +88,154 @@ class _LoginScreenState extends State<LoginScreen> {
         ],
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(24, 38, 24, 24),
-          children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFA855F7), Color(0xFFEC4899)],
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: 520,
+                  minHeight: constraints.maxHeight,
                 ),
-              ),
-              child: const Icon(Icons.auto_stories_rounded, size: 34),
-            ),
-            const SizedBox(height: 28),
-            const Text(
-              'Welcome back',
-              style: TextStyle(fontSize: 34, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Sign in to sync your ComiVerse account, or continue as guest to read public comics.',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                height: 1.45,
-              ),
-            ),
-            const SizedBox(height: 32),
-            Form(
-              key: _formKey,
-              child: Column(
-                children: [
-                  TextFormField(
-                    controller: _usernameController,
-                    textInputAction: TextInputAction.next,
-                    decoration: const InputDecoration(
-                      labelText: 'Email or username',
-                      prefixIcon: Icon(Icons.person_outline_rounded),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Enter your email or username';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _passwordController,
-                    obscureText: _obscurePassword,
-                    onFieldSubmitted: (_) => _submit(),
-                    decoration: InputDecoration(
-                      labelText: 'Password',
-                      prefixIcon: const Icon(Icons.lock_outline_rounded),
-                      suffixIcon: IconButton(
-                        onPressed: () {
-                          setState(() {
-                            _obscurePassword = !_obscurePassword;
-                          });
-                        },
-                        icon: Icon(
-                          _obscurePassword
-                              ? Icons.visibility_outlined
-                              : Icons.visibility_off_outlined,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 38, 24, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            gradient: LinearGradient(
+                              colors: [
+                                AppTheme.brandPurple,
+                                context.cvColors.brandPink,
+                              ],
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.auto_stories_rounded,
+                            size: 34,
+                          ),
                         ),
                       ),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Enter your password';
-                      }
-                      return null;
-                    },
+                      const SizedBox(height: 28),
+                      Text(
+                        context.tr('Welcome back'),
+                        style: const TextStyle(
+                          fontSize: 34,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        context.tr(
+                          'Sign in to sync your ComiVerse account, or continue as guest to read public comics.',
+                        ),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          height: 1.45,
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      Form(
+                        key: _formKey,
+                        child: Column(
+                          children: [
+                            TextFormField(
+                              controller: _usernameController,
+                              textInputAction: TextInputAction.next,
+                              decoration: InputDecoration(
+                                labelText: context.tr('Email or username'),
+                                prefixIcon: const Icon(
+                                  Icons.person_outline_rounded,
+                                ),
+                              ),
+                              validator: (value) {
+                                if (value == null || value.trim().isEmpty) {
+                                  return context.tr(
+                                    'Enter your email or username',
+                                  );
+                                }
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 16),
+                            TextFormField(
+                              controller: _passwordController,
+                              obscureText: _obscurePassword,
+                              onFieldSubmitted: (_) => _submit(),
+                              decoration: InputDecoration(
+                                labelText: context.tr('Password'),
+                                prefixIcon: const Icon(
+                                  Icons.lock_outline_rounded,
+                                ),
+                                suffixIcon: IconButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      _obscurePassword = !_obscurePassword;
+                                    });
+                                  },
+                                  icon: Icon(
+                                    _obscurePassword
+                                        ? Icons.visibility_outlined
+                                        : Icons.visibility_off_outlined,
+                                  ),
+                                ),
+                              ),
+                              validator: (value) {
+                                if (value == null || value.isEmpty) {
+                                  return context.tr('Enter your password');
+                                }
+                                return null;
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_error != null) ...[
+                        const SizedBox(height: 14),
+                        Text(
+                          _error!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 28),
+                      SizedBox(
+                        height: 52,
+                        child: PrimaryGradientButton(
+                          label: context.tr('Sign In'),
+                          onPressed: _submit,
+                          loading: _isLoading,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      OutlinedButton(
+                        onPressed: _isLoading ? null : widget.onContinueAsGuest,
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52),
+                        ),
+                        child: Text(context.tr('Continue as Guest')),
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'API: ${widget.apiClient.baseUrl}',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
-            if (_error != null) ...[
-              const SizedBox(height: 14),
-              Text(
-                _error!,
-                style: const TextStyle(color: Color(0xFFFF9DA8)),
-              ),
-            ],
-            const SizedBox(height: 28),
-            FilledButton(
-              onPressed: _isLoading ? null : _submit,
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(54),
-                backgroundColor: const Color(0xFFA855F7),
-              ),
-              child: _isLoading
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Sign In'),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: _isLoading ? null : widget.onContinueAsGuest,
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size.fromHeight(52),
-              ),
-              child: const Text('Continue as Guest'),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'API: ${widget.apiClient.baseUrl}',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                fontSize: 12,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

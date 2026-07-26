@@ -1,12 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 import '../models/chapter.dart';
 import '../models/comic.dart';
 import '../models/app_notification.dart';
+import '../models/forum.dart';
+import '../models/notification_preferences.dart';
 import '../models/premium_plan.dart';
 import '../models/user_profile.dart';
+import 'session_storage.dart';
 
 class ApiException implements Exception {
   const ApiException(this.message);
@@ -33,24 +38,91 @@ class ApiClient {
   ApiClient({
     String? baseUrl,
     Duration timeout = const Duration(seconds: 20),
-  })  : baseUrl = baseUrl ??
-            const String.fromEnvironment(
-              'API_BASE_URL',
-              defaultValue: 'http://192.168.1.6:8081/api',
-            ),
-        _timeout = timeout;
+    SessionStorage? sessionStorage,
+    http.Client? httpClient,
+  }) : baseUrl = resolveBaseUrl(baseUrl),
+       _timeout = timeout,
+       _sessionStorage = sessionStorage ?? const SecureSessionStorage(),
+       _httpClient = httpClient ?? http.Client();
+
+  static String resolveBaseUrl([String? override]) {
+    const configured = String.fromEnvironment('API_BASE_URL');
+    final provided = override?.trim();
+    final fromEnvironment = configured.trim();
+    late final String resolved;
+    if (provided?.isNotEmpty == true) {
+      resolved = provided!;
+    } else if (fromEnvironment.isNotEmpty) {
+      resolved = fromEnvironment;
+    } else if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      resolved = 'http://10.0.2.2:8081/api';
+    } else {
+      resolved = 'http://localhost:8081/api';
+    }
+    return resolved.endsWith('/')
+        ? resolved.substring(0, resolved.length - 1)
+        : resolved;
+  }
+
+  static const _accessTokenKey = 'comiverse_access_token';
+  static const _refreshTokenKey = 'comiverse_refresh_token';
+  static const _profileKey = 'comiverse_user_profile';
 
   final String baseUrl;
   final Duration _timeout;
-  final HttpClient _httpClient = HttpClient();
+  final SessionStorage _sessionStorage;
+  final http.Client _httpClient;
   String? _token;
   String? _refreshToken;
+  String _languageCode = 'en';
 
   bool get hasToken => _token != null && _token!.isNotEmpty;
+  String? get refreshToken => _refreshToken;
 
-  void clearSession() {
+  void setLanguage(String languageCode) {
+    if (languageCode == 'en' || languageCode == 'vi') {
+      _languageCode = languageCode;
+    }
+  }
+
+  Future<void> clearSession() async {
     _token = null;
     _refreshToken = null;
+    await Future.wait([
+      _sessionStorage.delete(_accessTokenKey),
+      _sessionStorage.delete(_refreshTokenKey),
+      _sessionStorage.delete(_profileKey),
+    ]);
+  }
+
+  Future<UserProfile?> restoreSession() async {
+    try {
+      final values = await Future.wait([
+        _sessionStorage.read(_accessTokenKey),
+        _sessionStorage.read(_refreshTokenKey),
+        _sessionStorage.read(_profileKey),
+      ]);
+      final token = values[0];
+      if (token == null || token.trim().isEmpty) return null;
+
+      _token = token;
+      _refreshToken = values[1];
+      final profileJson = values[2];
+      if (profileJson != null && profileJson.trim().isNotEmpty) {
+        final decoded = jsonDecode(profileJson);
+        if (decoded is Map<String, dynamic>) {
+          return UserProfile.fromJson(decoded);
+        }
+      }
+
+      final user = await getMe();
+      await _sessionStorage.write(_profileKey, jsonEncode(user.toJson()));
+      return user;
+    } catch (_) {
+      _token = null;
+      _refreshToken = null;
+      return null;
+    }
   }
 
   Future<LoginResult> login({
@@ -73,6 +145,11 @@ class ApiClient {
     _token = token;
     _refreshToken = refreshToken;
     final user = await getMe();
+    await Future.wait([
+      _sessionStorage.write(_accessTokenKey, token),
+      _sessionStorage.write(_refreshTokenKey, refreshToken),
+      _sessionStorage.write(_profileKey, jsonEncode(user.toJson())),
+    ]);
     return LoginResult(token: token, refreshToken: refreshToken, user: user);
   }
 
@@ -83,6 +160,44 @@ class ApiClient {
       throw const ApiException('Cannot read profile response.');
     }
     return UserProfile.fromJson(data);
+  }
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await _request(
+      'POST',
+      '/auth/change-password',
+      body: {'currentPassword': currentPassword, 'newPassword': newPassword},
+    );
+  }
+
+  Future<UserProfile> updateProfile({
+    required String fullName,
+    String? avatarUrl,
+    String? backgroundImageUrl,
+    DateTime? dateOfBirth,
+    String? bio,
+  }) async {
+    final json = await _request(
+      'PUT',
+      '/auth/profile',
+      body: {
+        'fullName': fullName.trim(),
+        'avatarUrl': _trimmedOrNull(avatarUrl),
+        'backgroundImageUrl': _trimmedOrNull(backgroundImageUrl),
+        'dateOfBirth': dateOfBirth?.toIso8601String().split('T').first,
+        'bio': _trimmedOrNull(bio),
+      },
+    );
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read updated profile response.');
+    }
+    final user = UserProfile.fromJson(data);
+    await _sessionStorage.write(_profileKey, jsonEncode(user.toJson()));
+    return user;
   }
 
   Future<List<Comic>> getComics() async {
@@ -108,7 +223,7 @@ class ApiClient {
   Future<List<Comic>> getTopViewed({int size = 10}) async {
     final json = await _request(
       'GET',
-      '/comics/top-views?page=1&size=$size',
+      '/comics/explore?sortBy=${Uri.encodeQueryComponent('Total Views')}&size=$size',
       authorized: false,
     );
     return _parseComicPayload(_unwrapData(json));
@@ -117,7 +232,7 @@ class ApiClient {
   Future<List<Comic>> getRecentlyUpdated({int size = 10}) async {
     final json = await _request(
       'GET',
-      '/comics/recently-updated?page=1&size=$size',
+      '/comics/explore?sortBy=${Uri.encodeQueryComponent('Recently Updated')}&size=$size',
       authorized: false,
     );
     return _parseComicPayload(_unwrapData(json));
@@ -159,12 +274,20 @@ class ApiClient {
   }
 
   Future<bool> toggleSaved(String comicId) async {
-    final json = await _request('POST', '/saves/toggle/$comicId', body: const {});
+    final json = await _request(
+      'POST',
+      '/saves/toggle/$comicId',
+      body: const {},
+    );
     return _unwrapData(json) == true;
   }
 
   Future<bool> toggleLiked(String comicId) async {
-    final json = await _request('POST', '/likes/toggle/$comicId', body: const {});
+    final json = await _request(
+      'POST',
+      '/likes/toggle/$comicId',
+      body: const {},
+    );
     return _unwrapData(json) == true;
   }
 
@@ -194,11 +317,63 @@ class ApiClient {
     await _request('PUT', '/notifications/read-all');
   }
 
+  Future<NotificationPreferences> getNotificationPreferences() async {
+    final json = await _request('GET', '/notifications/preferences');
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read notification preferences.');
+    }
+    return NotificationPreferences.fromJson(data);
+  }
+
+  Future<NotificationPreferences> updateNotificationPreferences(
+    Map<String, bool> preferences,
+  ) async {
+    final json = await _request(
+      'PUT',
+      '/notifications/preferences',
+      body: {'preferences': preferences},
+    );
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read notification preferences.');
+    }
+    return NotificationPreferences.fromJson(data);
+  }
+
   Future<int> getUnreadNotificationCount() async {
     final json = await _request('GET', '/notifications/unread-count');
     final value = _unwrapData(json);
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  Future<ForumThread> getForumThread(String threadId) async {
+    final json = await _request(
+      'GET',
+      '/forum-threads/${Uri.encodeComponent(threadId)}',
+      authorized: hasToken,
+    );
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read discussion thread.');
+    }
+    return ForumThread.fromJson(data);
+  }
+
+  Future<List<ForumComment>> getForumComments(String threadId) async {
+    final json = await _request(
+      'GET',
+      '/forum-threads/${Uri.encodeComponent(threadId)}/comments',
+      authorized: hasToken,
+    );
+    final data = _unwrapData(json);
+    if (data is! List) return const [];
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(ForumComment.fromJson)
+        .where((comment) => comment.id.isNotEmpty)
+        .toList();
   }
 
   Future<PremiumPlanSettings> getPremiumPlans() async {
@@ -260,24 +435,32 @@ class ApiClient {
     final uri = Uri.parse('$baseUrl$path');
 
     try {
-      final request = await _httpClient.openUrl(method, uri).timeout(_timeout);
-      request.headers.contentType = ContentType.json;
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final request = http.Request(method, uri);
+      request.headers['Content-Type'] = 'application/json';
+      request.headers['Accept'] = 'application/json';
+      request.headers['Accept-Language'] = _languageCode;
       if (authorized && hasToken) {
-        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
+        request.headers['Authorization'] = 'Bearer $_token';
       }
       if (body != null) {
-        request.write(jsonEncode(body));
+        request.body = jsonEncode(body);
       }
 
-      final response = await request.close().timeout(_timeout);
-      final text = await response.transform(utf8.decoder).join();
-      final decoded = text.trim().isEmpty ? <String, dynamic>{} : jsonDecode(text);
+      final streamedResponse = await _httpClient
+          .send(request)
+          .timeout(_timeout);
+      final response = await http.Response.fromStream(
+        streamedResponse,
+      ).timeout(_timeout);
+      final text = utf8.decode(response.bodyBytes);
+      final decoded = text.trim().isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(text);
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final message = decoded is Map<String, dynamic>
             ? (decoded['message'] ?? decoded['error'] ?? 'Request failed')
-                .toString()
+                  .toString()
             : 'Request failed';
         throw ApiException(message);
       }
@@ -286,7 +469,7 @@ class ApiClient {
         return decoded;
       }
       throw const ApiException('Unexpected backend response.');
-    } on SocketException {
+    } on http.ClientException {
       throw ApiException(
         'Cannot connect to backend. Check that Spring Boot is running at $baseUrl.',
       );
@@ -317,5 +500,10 @@ class ApiClient {
       return _parseComicList(data['data']);
     }
     return const [];
+  }
+
+  String? _trimmedOrNull(String? value) {
+    final trimmed = value?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/comic.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
@@ -42,21 +43,41 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<_HomeData> _load() async {
-    final results = await Future.wait([
-      widget.apiClient.getTopViewed(size: 8),
-      widget.apiClient.getRecommendations(size: 10),
-      widget.apiClient.getRecentlyUpdated(size: 8),
+    final results = await Future.wait<_HomeSectionResult>([
+      _capture(widget.apiClient.getTopViewed(size: 8)),
+      _capture(widget.apiClient.getRecommendations(size: 10)),
+      _capture(widget.apiClient.getRecentlyUpdated(size: 8)),
       if (widget.apiClient.hasToken)
-        widget.apiClient.getReadingHistory()
+        _capture(widget.apiClient.getReadingHistory())
       else
-        Future.value(const <Comic>[]),
+        Future.value(const _HomeSectionResult(comics: [])),
     ]);
+    final coreSections = results.take(3).toList();
+    if (coreSections.every((section) => section.error != null)) {
+      throw coreSections.first.error!;
+    }
+    final trending = results[0].comics;
+    final updated = results[2].comics;
+    final recommendations = results[1].comics.isNotEmpty
+        ? results[1].comics
+        : trending.isNotEmpty
+        ? trending
+        : updated;
     return _HomeData(
-      trending: results[0],
-      recommended: results[1],
-      updated: results[2],
-      history: results[3],
+      trending: trending,
+      recommended: recommendations,
+      updated: updated,
+      history: results[3].comics,
+      hasPartialFailure: results.any((section) => section.error != null),
     );
+  }
+
+  Future<_HomeSectionResult> _capture(Future<List<Comic>> operation) async {
+    try {
+      return _HomeSectionResult(comics: await operation);
+    } catch (error) {
+      return _HomeSectionResult(error: error);
+    }
   }
 
   Future<void> _refresh() async {
@@ -67,10 +88,8 @@ class _HomeScreenState extends State<HomeScreen>
   void _openComic(Comic comic) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => ComicDetailScreen(
-          apiClient: widget.apiClient,
-          comic: comic,
-        ),
+        builder: (_) =>
+            ComicDetailScreen(apiClient: widget.apiClient, comic: comic),
       ),
     );
   }
@@ -79,11 +98,12 @@ class _HomeScreenState extends State<HomeScreen>
   Widget build(BuildContext context) {
     super.build(context);
     final scheme = Theme.of(context).colorScheme;
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final scaledRailExtra = ((textScale - 1) * 64).clamp(0, 64).toDouble();
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 16,
         title: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
               width: 30,
@@ -97,17 +117,26 @@ class _HomeScreenState extends State<HomeScreen>
               child: const Icon(Icons.auto_stories_rounded, size: 18),
             ),
             const SizedBox(width: 9),
-            Text('ComiVerse', style: Theme.of(context).textTheme.headlineSmall),
+            Expanded(
+              child: Text(
+                'ComiVerse',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+            ),
           ],
         ),
         actions: [
           IconButton(
-            tooltip: 'Explore comics',
+            tooltip: context.tr('Explore comics'),
             onPressed: widget.onOpenExplore,
             icon: const Icon(Icons.search_rounded),
           ),
           IconButton(
-            tooltip: widget.isDarkMode ? 'Use light mode' : 'Use dark mode',
+            tooltip: context.tr(
+              widget.isDarkMode ? 'Use light mode' : 'Use dark mode',
+            ),
             onPressed: widget.onToggleTheme,
             icon: Icon(
               widget.isDarkMode
@@ -149,17 +178,19 @@ class _HomeScreenState extends State<HomeScreen>
               );
             }
             final data = snapshot.data!;
-            final featured = data.trending.firstOrNull ??
+            final featured =
+                data.trending.firstOrNull ??
                 data.recommended.firstOrNull ??
-                data.updated.firstOrNull;
+                data.updated.firstOrNull ??
+                data.history.firstOrNull;
             if (featured == null) {
               return ListView(
-                children: const [
+                children: [
                   SizedBox(
                     height: 500,
                     child: EmptyState(
                       icon: Icons.auto_stories_outlined,
-                      message: 'No published comics yet.',
+                      message: context.tr('No published comics yet.'),
                     ),
                   ),
                 ],
@@ -176,18 +207,49 @@ class _HomeScreenState extends State<HomeScreen>
                     onTap: () => _openComic(featured),
                   ),
                 ),
+                if (data.hasPartialFailure)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: Card(
+                      color: context.cvColors.warning.withValues(alpha: 0.10),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.cloud_off_outlined,
+                              color: context.cvColors.warning,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                context.tr(
+                                  'Some sections could not be loaded.',
+                                ),
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: _refresh,
+                              child: Text(context.tr('Retry')),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 if (data.history.isNotEmpty) ...[
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
-                    child: const SectionHeader(title: 'Continue Reading'),
+                    child: SectionHeader(title: context.tr('Continue Reading')),
                   ),
                   SizedBox(
-                    height: 126,
+                    height: 140,
                     child: ListView.separated(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       scrollDirection: Axis.horizontal,
                       itemCount: data.history.take(5).length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 12),
+                      separatorBuilder: (_, _) => const SizedBox(width: 12),
                       itemBuilder: (context, index) {
                         final comic = data.history[index];
                         return _ContinueCard(
@@ -198,106 +260,119 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ),
                 ],
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 24, 16, 10),
-                  child: SectionHeader(
-                    title: 'Recommended for You',
-                    actionLabel: 'View all',
-                    onAction: widget.onOpenExplore,
+                if (data.recommended.isNotEmpty) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 24, 16, 10),
+                    child: SectionHeader(
+                      title: context.tr('Recommended for You'),
+                      actionLabel: context.tr('View all'),
+                      onAction: widget.onOpenExplore,
+                    ),
                   ),
-                ),
-                SizedBox(
-                  height: 230,
-                  child: ListView.separated(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    scrollDirection: Axis.horizontal,
-                    itemCount: data.recommended.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 12),
-                    itemBuilder: (context, index) {
-                      final comic = data.recommended[index];
-                      return ComicCoverCard(
-                        comic: comic,
-                        onTap: () => _openComic(comic),
-                      );
-                    },
+                  SizedBox(
+                    // Cover (3:4), two title lines, and metadata need more than
+                    // 230dp on smaller devices and with Android text scaling.
+                    height: 252 + scaledRailExtra,
+                    child: ListView.separated(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      scrollDirection: Axis.horizontal,
+                      itemCount: data.recommended.length,
+                      separatorBuilder: (_, _) => const SizedBox(width: 12),
+                      itemBuilder: (context, index) {
+                        final comic = data.recommended[index];
+                        return ComicCoverCard(
+                          comic: comic,
+                          onTap: () => _openComic(comic),
+                        );
+                      },
+                    ),
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 22, 16, 4),
-                  child: SectionHeader(
-                    title: 'Trending Now',
-                    icon: Icons.trending_up_rounded,
-                    actionLabel: 'Ranking',
-                    onAction: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => RankingScreen(apiClient: widget.apiClient),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Column(
-                    children: [
-                      for (var i = 0; i < data.trending.take(5).length; i++)
-                        ComicListRow(
-                          comic: data.trending[i],
-                          leading: SizedBox(
-                            width: 24,
-                            child: Text(
-                              '${i + 1}',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                    color: i == 0
-                                        ? scheme.primary
-                                        : scheme.onSurfaceVariant,
-                                  ),
-                            ),
+                ],
+                if (data.trending.isNotEmpty) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 22, 16, 4),
+                    child: SectionHeader(
+                      title: context.tr('Trending Now'),
+                      icon: Icons.trending_up_rounded,
+                      actionLabel: context.tr('Ranking'),
+                      onAction: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                RankingScreen(apiClient: widget.apiClient),
                           ),
-                          onTap: () => _openComic(data.trending[i]),
-                        ),
-                    ],
+                        );
+                      },
+                    ),
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
-                  child: const SectionHeader(title: 'New Updates'),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final columns = constraints.maxWidth >= 760
-                          ? 4
-                          : constraints.maxWidth >= 520
-                              ? 3
-                              : 2;
-                      final ratio = columns >= 3 ? 0.72 : 0.68;
-                      return GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: data.updated.length,
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: columns,
-                          mainAxisSpacing: 16,
-                          crossAxisSpacing: 12,
-                          childAspectRatio: ratio,
-                        ),
-                        itemBuilder: (context, index) {
-                          final comic = data.updated[index];
-                          return ComicCoverCard(
-                            comic: comic,
-                            width: double.infinity,
-                            showChapter: true,
-                            onTap: () => _openComic(comic),
-                          );
-                        },
-                      );
-                    },
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Column(
+                      children: [
+                        for (var i = 0; i < data.trending.take(5).length; i++)
+                          ComicListRow(
+                            comic: data.trending[i],
+                            leading: SizedBox(
+                              width: 24,
+                              child: Text(
+                                '${i + 1}',
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context).textTheme.headlineSmall
+                                    ?.copyWith(
+                                      color: i == 0
+                                          ? scheme.primary
+                                          : scheme.onSurfaceVariant,
+                                    ),
+                              ),
+                            ),
+                            onTap: () => _openComic(data.trending[i]),
+                          ),
+                      ],
+                    ),
                   ),
-                ),
+                ],
+                if (data.updated.isNotEmpty) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
+                    child: SectionHeader(title: context.tr('New Updates')),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final columns = constraints.maxWidth >= 760
+                            ? 4
+                            : constraints.maxWidth >= 520
+                            ? 3
+                            : 2;
+                        return GridView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: data.updated.length,
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: columns,
+                                mainAxisSpacing: 16,
+                                crossAxisSpacing: 12,
+                                // The card contains a 3:4 cover plus two title
+                                // lines and metadata. A taller cell prevents
+                                // overflow at 320dp and with text scaling.
+                                childAspectRatio: 0.50,
+                              ),
+                          itemBuilder: (context, index) {
+                            final comic = data.updated[index];
+                            return ComicCoverCard(
+                              comic: comic,
+                              width: double.infinity,
+                              showChapter: true,
+                              onTap: () => _openComic(comic),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ],
             );
           },
@@ -321,109 +396,138 @@ class _FeaturedComic extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return AspectRatio(
-      aspectRatio: MediaQuery.sizeOf(context).width >= 700 ? 2.4 : 1.05,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            ComicCoverImage(url: comic.imageUrl),
-            const DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.transparent, Color(0xF207040D)],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  stops: [0.2, 0.85],
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final baseHeight = constraints.maxWidth >= 700
+            ? 300.0
+            : (constraints.maxWidth / 1.05).clamp(340.0, 420.0);
+        final scaledExtra = ((textScale - 1) * 100).clamp(0, 80).toDouble();
+        return SizedBox(
+          height: baseHeight + scaledExtra,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ComicCoverImage(url: comic.imageUrl),
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.transparent, Color(0xF207040D)],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      stops: [0.2, 0.85],
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Wrap(
-                    spacing: 6,
-                    children: comic.genres.take(2).map((genre) {
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 9,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: scheme.primary,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          genre.toUpperCase(),
-                          style: TextStyle(
-                            color: scheme.onPrimary,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Wrap(
+                        spacing: 6,
+                        children: comic.genres.take(2).map((genre) {
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: scheme.primary,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              genre.toUpperCase(),
+                              style: TextStyle(
+                                color: scheme.onPrimary,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        comic.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(
+                          context,
+                        ).textTheme.displaySmall?.copyWith(color: Colors.white),
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.star_rounded,
+                            size: 17,
+                            color: context.cvColors.rating,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            comic.ratingAverage?.toStringAsFixed(1) ??
+                                context.tr('New'),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          if (comic.chapterCount != null) ...[
+                            const Text(
+                              '  ·  ',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                            Text(
+                              context.tr(
+                                '{count} chapters',
+                                values: {'count': comic.chapterCount},
+                              ),
+                              style: const TextStyle(color: Colors.white70),
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (comic.summary?.trim().isNotEmpty == true) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          comic.summary!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            height: 1.35,
                           ),
                         ),
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    comic.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                          color: Colors.white,
-                        ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Icon(Icons.star_rounded, size: 17, color: context.cvColors.rating),
-                      const SizedBox(width: 4),
-                      Text(
-                        comic.ratingAverage?.toStringAsFixed(1) ?? 'New',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
+                      ],
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        width: double.infinity,
+                        child: PrimaryGradientButton(
+                          label: comic.latestChapterNumber == null
+                              ? context.tr('View Comic')
+                              : context.tr(
+                                  'Read Chapter {number}',
+                                  values: {'number': comic.latestChapterNumber},
+                                ),
+                          icon: Icons.menu_book_rounded,
+                          onPressed: onTap,
                         ),
                       ),
-                      if (comic.chapterCount != null) ...[
-                        const Text('  ·  ', style: TextStyle(color: Colors.white70)),
-                        Text(
-                          '${comic.chapterCount} chapters',
-                          style: const TextStyle(color: Colors.white70),
-                        ),
-                      ],
                     ],
                   ),
-                  if (comic.summary?.trim().isNotEmpty == true) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      comic.summary!,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white70, height: 1.35),
-                    ),
-                  ],
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: PrimaryGradientButton(
-                      label: comic.latestChapterNumber == null
-                          ? 'View Comic'
-                          : 'Read Chapter ${comic.latestChapterNumber}',
-                      icon: Icons.menu_book_rounded,
-                      onPressed: onTap,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -450,7 +554,7 @@ class _ContinueCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(6),
                   child: SizedBox(
                     width: 70,
-                    height: 100,
+                    height: 110,
                     child: ComicCoverImage(url: comic.imageUrl),
                   ),
                 ),
@@ -469,8 +573,11 @@ class _ContinueCard extends StatelessWidget {
                       const SizedBox(height: 6),
                       Text(
                         comic.latestChapterNumber == null
-                            ? 'Continue reading'
-                            : 'Latest: Ch. ${comic.latestChapterNumber}',
+                            ? context.tr('Continue reading')
+                            : context.tr(
+                                'Latest: Ch. {number}',
+                                values: {'number': comic.latestChapterNumber},
+                              ),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       const SizedBox(height: 14),
@@ -517,10 +624,19 @@ class _HomeData {
     required this.recommended,
     required this.updated,
     required this.history,
+    required this.hasPartialFailure,
   });
 
   final List<Comic> trending;
   final List<Comic> recommended;
   final List<Comic> updated;
   final List<Comic> history;
+  final bool hasPartialFailure;
+}
+
+class _HomeSectionResult {
+  const _HomeSectionResult({this.comics = const [], this.error});
+
+  final List<Comic> comics;
+  final Object? error;
 }
