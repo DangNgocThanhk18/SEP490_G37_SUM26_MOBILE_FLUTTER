@@ -31,6 +31,18 @@ Spring Boot must listen on the LAN interface and the firewall must allow port
 `8081`. `localhost` on a physical phone refers to the phone itself, not the
 development computer.
 
+### Flutter Web
+
+Run Flutter Web on the origin allowed by the local Spring Boot configuration:
+
+```powershell
+flutter run -d chrome --web-port=5173 --dart-define=API_BASE_URL=http://localhost:8081/api
+```
+
+For a deployed web app, set the backend environment variable
+`CORS_ALLOWED_ORIGINS` to the web app origin. Separate multiple origins with
+commas.
+
 ### Deployed Backend
 
 Use the public HTTPS API URL for a cloud build:
@@ -48,4 +60,5 @@ Each developer can use their own URL without changing tracked Dart files.
 flutter analyze
 flutter test
 flutter build apk --debug
+flutter build web --debug
 ```

@@ -299,10 +299,106 @@ const Map<String, String> _vietnamese = {
   'Yearly': 'Năm',
   'Your Collection': 'Bộ sưu tập của bạn',
   'Your Premium plan is now active.': 'Gói Premium của bạn đã được kích hoạt.',
+  'Avatar URL': 'URL ảnh đại diện',
+  'Background image URL': 'URL ảnh nền',
+  'Bio': 'Giới thiệu',
+  'Cannot read notification preferences.': 'Không thể đọc tùy chọn thông báo.',
+  'Cannot read updated profile response.': 'Không thể đọc hồ sơ vừa cập nhật.',
+  'Choose which in-app notifications you receive.':
+      'Chọn các thông báo trong ứng dụng mà bạn muốn nhận.',
+  'Clear': 'Xóa',
+  'Coming soon': 'Sắp có',
+  'Date of birth': 'Ngày sinh',
+  'Display name is required.': 'Vui lòng nhập tên hiển thị.',
+  'Edit profile': 'Chỉnh sửa hồ sơ',
+  'Forum activity': 'Hoạt động diễn đàn',
+  'No notification preferences are available.':
+      'Không có tùy chọn thông báo khả dụng.',
+  'Not set': 'Chưa thiết lập',
+  'Notification preferences saved.': 'Đã lưu tùy chọn thông báo.',
+  'Profile updated.': 'Đã cập nhật hồ sơ.',
+  'Project opportunities': 'Cơ hội dự án',
+  'Review queue': 'Hàng chờ kiểm duyệt',
+  'Save changes': 'Lưu thay đổi',
+  'Save preferences': 'Lưu tùy chọn',
+  'Select theme': 'Chọn giao diện',
+  'Some sections could not be loaded.': 'Một số nội dung chưa thể tải.',
+  'Submission status': 'Trạng thái nội dung gửi duyệt',
+  'System announcements': 'Thông báo hệ thống',
+  'System default': 'Theo hệ thống',
+  'Team join requests': 'Yêu cầu tham gia nhóm',
+  'Team updates': 'Cập nhật nhóm',
   'Plan availability and prices are loaded from ComiVerse system settings.':
       'Gói và mức giá được tải từ cài đặt hệ thống ComiVerse.',
   'Your current session will be closed.':
       'Phiên đăng nhập hiện tại sẽ được đóng.',
+  'How can we help?': 'Chúng tôi có thể giúp gì cho bạn?',
+  'Find quick answers or contact the ComiVerse support team.':
+      'Tìm câu trả lời nhanh hoặc liên hệ đội ngũ hỗ trợ ComiVerse.',
+  'Frequently Asked Questions': 'Câu hỏi thường gặp',
+  'How do I save comics and sync my progress?':
+      'Làm thế nào để lưu truyện và đồng bộ tiến độ?',
+  'Sign in, then use Save or Favorite on a comic. Your library and reading progress will be synced with your account.':
+      'Hãy đăng nhập, sau đó chọn Lưu hoặc Yêu thích trên truyện. Thư viện và tiến độ đọc sẽ được đồng bộ với tài khoản của bạn.',
+  'How can I change the app language or theme?':
+      'Làm thế nào để đổi ngôn ngữ hoặc giao diện?',
+  'Open Profile, then choose Language or Theme under App Settings. Changes are applied immediately and kept for future sessions.':
+      'Mở Hồ sơ, sau đó chọn Ngôn ngữ hoặc Giao diện trong Cài đặt ứng dụng. Thay đổi được áp dụng ngay và lưu cho những lần sử dụng sau.',
+  'Why can I not connect to the server?':
+      'Tại sao tôi không thể kết nối máy chủ?',
+  'Check your internet connection and try again. When developing locally, make sure Spring Boot is running and the API base URL is correct for your device.':
+      'Hãy kiểm tra kết nối mạng và thử lại. Khi phát triển cục bộ, hãy chắc chắn Spring Boot đang chạy và URL API phù hợp với thiết bị.',
+  'How do notification preferences work?':
+      'Tùy chọn thông báo hoạt động như thế nào?',
+  'Open Profile and select Notification Preferences. You can enable or disable each notification category available for your account role.':
+      'Mở Hồ sơ và chọn Tùy chọn thông báo. Bạn có thể bật hoặc tắt từng loại thông báo dành cho vai trò tài khoản của mình.',
+  'How do I report inappropriate content?':
+      'Làm thế nào để báo cáo nội dung không phù hợp?',
+  'Send the comic, chapter, comment, or discussion link to our support email with a short description. The moderation team will review it.':
+      'Gửi liên kết truyện, chương, bình luận hoặc thảo luận tới email hỗ trợ kèm mô tả ngắn. Đội ngũ kiểm duyệt sẽ xem xét.',
+  'Still need help?': 'Bạn vẫn cần trợ giúp?',
+  'Email us and include your account email, device, and a short description of the issue. We usually respond within 24 hours on business days.':
+      'Hãy gửi email kèm email tài khoản, thiết bị và mô tả ngắn về sự cố. Chúng tôi thường phản hồi trong 24 giờ vào ngày làm việc.',
+  'Copy support email': 'Sao chép email hỗ trợ',
+  'Support email copied.': 'Đã sao chép email hỗ trợ.',
+  'Last updated: July 2026': 'Cập nhật lần cuối: tháng 7 năm 2026',
+  'Questions about this document?': 'Bạn có câu hỏi về tài liệu này?',
+  'Contact the ComiVerse support team at {email}.':
+      'Liên hệ đội ngũ hỗ trợ ComiVerse tại {email}.',
+  'This policy explains what information ComiVerse collects, why we use it, and the choices available to you.':
+      'Chính sách này giải thích thông tin ComiVerse thu thập, lý do sử dụng và các lựa chọn dành cho bạn.',
+  '1. Information We Collect': '1. Thông tin chúng tôi thu thập',
+  'We collect account information you provide, such as your username, email, display name, profile details, and authentication data. We also store activity needed for the service, including saved comics, likes, reading history, comments, notification preferences, and Premium status.':
+      'Chúng tôi thu thập thông tin tài khoản bạn cung cấp như tên đăng nhập, email, tên hiển thị, hồ sơ và dữ liệu xác thực. Chúng tôi cũng lưu hoạt động cần thiết cho dịch vụ, gồm truyện đã lưu, lượt thích, lịch sử đọc, bình luận, tùy chọn thông báo và trạng thái Premium.',
+  '2. How We Use Information': '2. Cách chúng tôi sử dụng thông tin',
+  'We use this information to operate your account, synchronize your library, personalize recommendations, deliver notifications, process Premium features, improve reliability, and protect ComiVerse from fraud or abuse.':
+      'Chúng tôi dùng thông tin này để vận hành tài khoản, đồng bộ thư viện, cá nhân hóa đề xuất, gửi thông báo, cung cấp tính năng Premium, cải thiện độ ổn định và bảo vệ ComiVerse khỏi gian lận hoặc lạm dụng.',
+  '3. Sharing and Service Providers': '3. Chia sẻ và nhà cung cấp dịch vụ',
+  'We do not sell your personal information. Data may be processed by service providers that help us host, secure, monitor, or deliver ComiVerse. We may disclose information when required by law or to protect users and the platform.':
+      'Chúng tôi không bán thông tin cá nhân của bạn. Dữ liệu có thể được xử lý bởi các nhà cung cấp hỗ trợ lưu trữ, bảo mật, giám sát hoặc vận hành ComiVerse. Chúng tôi có thể cung cấp thông tin khi pháp luật yêu cầu hoặc để bảo vệ người dùng và nền tảng.',
+  '4. Storage and Security': '4. Lưu trữ và bảo mật',
+  'We use reasonable technical and organizational safeguards to protect your information. No online service can guarantee absolute security, so keep your password private and notify support if you suspect unauthorized access.':
+      'Chúng tôi áp dụng các biện pháp kỹ thuật và tổ chức hợp lý để bảo vệ thông tin. Không dịch vụ trực tuyến nào đảm bảo an toàn tuyệt đối, vì vậy hãy giữ kín mật khẩu và báo cho hỗ trợ nếu nghi ngờ truy cập trái phép.',
+  '5. Your Choices and Rights': '5. Lựa chọn và quyền của bạn',
+  'You can update profile details and notification preferences in the app. You may also request access to, correction of, or deletion of your personal information by contacting support, subject to legal and operational retention requirements.':
+      'Bạn có thể cập nhật hồ sơ và tùy chọn thông báo trong ứng dụng. Bạn cũng có thể yêu cầu truy cập, chỉnh sửa hoặc xóa thông tin cá nhân bằng cách liên hệ hỗ trợ, tùy theo yêu cầu lưu trữ pháp lý và vận hành.',
+  'Please read these terms before accessing or using ComiVerse.':
+      'Vui lòng đọc các điều khoản này trước khi truy cập hoặc sử dụng ComiVerse.',
+  '1. Acceptance of Terms': '1. Chấp nhận điều khoản',
+  'By accessing or using ComiVerse, you agree to these Terms of Service and our Privacy Policy. If you do not agree, do not use the service. These terms apply to visitors, registered users, and content contributors.':
+      'Khi truy cập hoặc sử dụng ComiVerse, bạn đồng ý với Điều khoản dịch vụ và Chính sách quyền riêng tư này. Nếu không đồng ý, vui lòng không sử dụng dịch vụ. Các điều khoản áp dụng cho khách truy cập, người dùng đã đăng ký và người đóng góp nội dung.',
+  '2. User Accounts': '2. Tài khoản người dùng',
+  'You must provide accurate account information and safeguard your credentials. You are responsible for activity under your account and should notify us immediately of unauthorized use. We may suspend or terminate accounts that violate these terms.':
+      'Bạn phải cung cấp thông tin tài khoản chính xác và bảo vệ thông tin đăng nhập. Bạn chịu trách nhiệm cho hoạt động trong tài khoản và cần báo ngay khi có truy cập trái phép. Chúng tôi có thể đình chỉ hoặc chấm dứt tài khoản vi phạm điều khoản.',
+  '3. Content Guidelines': '3. Nguyên tắc nội dung',
+  'You retain ownership of original content you submit. By publishing it, you grant ComiVerse a non-exclusive license to display, distribute, and promote it through the service. Content must not violate intellectual property rights or contain illegal, harmful, offensive, or misleading material.':
+      'Bạn giữ quyền sở hữu nội dung gốc đã gửi. Khi xuất bản, bạn cấp cho ComiVerse quyền không độc quyền để hiển thị, phân phối và quảng bá nội dung qua dịch vụ. Nội dung không được vi phạm quyền sở hữu trí tuệ hoặc chứa tài liệu bất hợp pháp, gây hại, xúc phạm hay sai lệch.',
+  '4. Prohibited Activities': '4. Hoạt động bị cấm',
+  'You may not access another account without permission, scrape data, upload malicious code, impersonate others, bypass security controls, manipulate service metrics, or disrupt normal platform operation. Violations may lead to content removal or account termination.':
+      'Bạn không được truy cập tài khoản khác khi chưa được phép, thu thập dữ liệu tự động, tải mã độc, mạo danh, vượt qua kiểm soát bảo mật, thao túng số liệu hoặc làm gián đoạn hoạt động nền tảng. Vi phạm có thể dẫn đến xóa nội dung hoặc chấm dứt tài khoản.',
+  '5. Limitation of Liability': '5. Giới hạn trách nhiệm',
+  'To the extent permitted by law, ComiVerse is not liable for indirect, incidental, special, consequential, or punitive damages resulting from your use of the service. Our total liability will not exceed the amount you paid to ComiVerse in the previous twelve months.':
+      'Trong phạm vi pháp luật cho phép, ComiVerse không chịu trách nhiệm cho thiệt hại gián tiếp, ngẫu nhiên, đặc biệt, hệ quả hoặc mang tính trừng phạt phát sinh từ việc sử dụng dịch vụ. Tổng trách nhiệm không vượt quá số tiền bạn đã thanh toán cho ComiVerse trong mười hai tháng trước đó.',
   '{count} chapters': '{count} chương',
   '{count}d': '{count} ngày',
   '{count}h': '{count} giờ',

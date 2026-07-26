@@ -28,8 +28,11 @@ class MainShell extends StatefulWidget {
     required this.onSignOut,
     required this.onToggleTheme,
     required this.isDarkMode,
+    this.themeMode = ThemeMode.system,
+    this.onThemeModeChanged,
     this.locale = const Locale('en'),
     this.onLocaleChanged,
+    this.onUserChanged,
   });
 
   final ApiClient apiClient;
@@ -37,8 +40,11 @@ class MainShell extends StatefulWidget {
   final VoidCallback onSignOut;
   final VoidCallback onToggleTheme;
   final bool isDarkMode;
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode>? onThemeModeChanged;
   final Locale locale;
   final ValueChanged<Locale>? onLocaleChanged;
+  final ValueChanged<UserProfile>? onUserChanged;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -55,12 +61,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadUnreadCount();
-    if (widget.apiClient.hasToken) {
-      _notificationTimer = Timer.periodic(
-        const Duration(seconds: 10),
-        (_) => _loadUnreadCount(),
-      );
-    }
+    _startNotificationPolling();
   }
 
   @override
@@ -73,8 +74,24 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      _startNotificationPolling();
       _refreshNotifications(refreshList: _index == 3);
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      _notificationTimer?.cancel();
+      _notificationTimer = null;
     }
+  }
+
+  void _startNotificationPolling() {
+    _notificationTimer?.cancel();
+    if (!widget.apiClient.hasToken) return;
+    _notificationTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _loadUnreadCount(),
+    );
   }
 
   Future<void> _loadUnreadCount() async {
@@ -276,49 +293,58 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         onSignOut: widget.onSignOut,
         locale: widget.locale,
         onLocaleChanged: widget.onLocaleChanged,
+        themeMode: widget.themeMode,
+        onThemeModeChanged: widget.onThemeModeChanged,
+        onUserChanged: widget.onUserChanged,
       ),
     ];
 
-    return Scaffold(
-      body: IndexedStack(index: _index, children: pages),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: _goTo,
-        destinations: [
-          NavigationDestination(
-            icon: const Icon(Icons.home_outlined),
-            selectedIcon: const Icon(Icons.home_rounded),
-            label: context.tr('Home'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.explore_outlined),
-            selectedIcon: const Icon(Icons.explore_rounded),
-            label: context.tr('Explore'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.library_books_outlined),
-            selectedIcon: const Icon(Icons.library_books_rounded),
-            label: context.tr('Library'),
-          ),
-          NavigationDestination(
-            icon: Badge(
-              isLabelVisible: _unreadCount > 0,
-              label: Text(_unreadCount > 99 ? '99+' : '$_unreadCount'),
-              child: const Icon(Icons.notifications_outlined),
+    return PopScope(
+      canPop: _index == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _index != 0) _goTo(0);
+      },
+      child: Scaffold(
+        body: IndexedStack(index: _index, children: pages),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _index,
+          onDestinationSelected: _goTo,
+          destinations: [
+            NavigationDestination(
+              icon: const Icon(Icons.home_outlined),
+              selectedIcon: const Icon(Icons.home_rounded),
+              label: context.tr('Home'),
             ),
-            selectedIcon: Badge(
-              isLabelVisible: _unreadCount > 0,
-              label: Text(_unreadCount > 99 ? '99+' : '$_unreadCount'),
-              child: const Icon(Icons.notifications_rounded),
+            NavigationDestination(
+              icon: const Icon(Icons.explore_outlined),
+              selectedIcon: const Icon(Icons.explore_rounded),
+              label: context.tr('Explore'),
             ),
-            label: context.tr('Alerts'),
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.person_outline_rounded),
-            selectedIcon: const Icon(Icons.person_rounded),
-            label: context.tr('Profile'),
-          ),
-        ],
+            NavigationDestination(
+              icon: const Icon(Icons.library_books_outlined),
+              selectedIcon: const Icon(Icons.library_books_rounded),
+              label: context.tr('Library'),
+            ),
+            NavigationDestination(
+              icon: Badge(
+                isLabelVisible: _unreadCount > 0,
+                label: Text(_unreadCount > 99 ? '99+' : '$_unreadCount'),
+                child: const Icon(Icons.notifications_outlined),
+              ),
+              selectedIcon: Badge(
+                isLabelVisible: _unreadCount > 0,
+                label: Text(_unreadCount > 99 ? '99+' : '$_unreadCount'),
+                child: const Icon(Icons.notifications_rounded),
+              ),
+              label: context.tr('Alerts'),
+            ),
+            NavigationDestination(
+              icon: const Icon(Icons.person_outline_rounded),
+              selectedIcon: const Icon(Icons.person_rounded),
+              label: context.tr('Profile'),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -41,8 +41,10 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
   Future<void> _restoreAppState() async {
     final userFuture = _apiClient.restoreSession();
     final languageFuture = _readLanguageCode();
+    final themeFuture = _readThemeMode();
     final user = await userFuture;
     final languageCode = await languageFuture;
+    final themeMode = await themeFuture;
     if (!mounted) return;
     setState(() {
       _user = user;
@@ -50,6 +52,7 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
         _locale = Locale(languageCode!);
         _apiClient.setLanguage(languageCode);
       }
+      if (themeMode != null) _themeMode = themeMode;
       _isRestoringSession = false;
     });
   }
@@ -57,6 +60,19 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
   Future<String?> _readLanguageCode() async {
     try {
       return await _preferences.readLanguageCode();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<ThemeMode?> _readThemeMode() async {
+    try {
+      return switch (await _preferences.readThemeMode()) {
+        'light' => ThemeMode.light,
+        'dark' => ThemeMode.dark,
+        'system' => ThemeMode.system,
+        _ => null,
+      };
     } catch (_) {
       return null;
     }
@@ -84,9 +100,21 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
         _themeMode == ThemeMode.dark ||
         (_themeMode == ThemeMode.system &&
             platformBrightness == Brightness.dark);
-    setState(() {
-      _themeMode = isCurrentlyDark ? ThemeMode.light : ThemeMode.dark;
-    });
+    _changeThemeMode(isCurrentlyDark ? ThemeMode.light : ThemeMode.dark);
+  }
+
+  void _changeThemeMode(ThemeMode themeMode) {
+    if (_themeMode == themeMode) return;
+    setState(() => _themeMode = themeMode);
+    unawaited(_writeThemeMode(themeMode));
+  }
+
+  Future<void> _writeThemeMode(ThemeMode themeMode) async {
+    try {
+      await _preferences.writeThemeMode(themeMode.name);
+    } catch (_) {
+      // A storage failure must not prevent an immediate theme change.
+    }
   }
 
   void _handleSignedIn(UserProfile user) {
@@ -94,6 +122,10 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
       _user = user;
       _isGuest = false;
     });
+  }
+
+  void _handleUserChanged(UserProfile user) {
+    setState(() => _user = user);
   }
 
   void _handleGuestMode() {
@@ -143,8 +175,11 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
               onSignOut: _handleSignOut,
               onToggleTheme: _toggleTheme,
               isDarkMode: isDarkMode,
+              themeMode: _themeMode,
+              onThemeModeChanged: _changeThemeMode,
               locale: _locale,
               onLocaleChanged: _changeLocale,
+              onUserChanged: _handleUserChanged,
             )
           : LoginScreen(
               apiClient: _apiClient,

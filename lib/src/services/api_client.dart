@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 import '../models/chapter.dart';
 import '../models/comic.dart';
 import '../models/app_notification.dart';
 import '../models/forum.dart';
+import '../models/notification_preferences.dart';
 import '../models/premium_plan.dart';
 import '../models/user_profile.dart';
 import 'session_storage.dart';
@@ -36,9 +39,11 @@ class ApiClient {
     String? baseUrl,
     Duration timeout = const Duration(seconds: 20),
     SessionStorage? sessionStorage,
+    http.Client? httpClient,
   }) : baseUrl = resolveBaseUrl(baseUrl),
        _timeout = timeout,
-       _sessionStorage = sessionStorage ?? const SecureSessionStorage();
+       _sessionStorage = sessionStorage ?? const SecureSessionStorage(),
+       _httpClient = httpClient ?? http.Client();
 
   static String resolveBaseUrl([String? override]) {
     const configured = String.fromEnvironment('API_BASE_URL');
@@ -49,7 +54,7 @@ class ApiClient {
       resolved = provided!;
     } else if (fromEnvironment.isNotEmpty) {
       resolved = fromEnvironment;
-    } else if (Platform.isAndroid) {
+    } else if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       resolved = 'http://10.0.2.2:8081/api';
     } else {
       resolved = 'http://localhost:8081/api';
@@ -66,7 +71,7 @@ class ApiClient {
   final String baseUrl;
   final Duration _timeout;
   final SessionStorage _sessionStorage;
-  final HttpClient _httpClient = HttpClient();
+  final http.Client _httpClient;
   String? _token;
   String? _refreshToken;
   String _languageCode = 'en';
@@ -166,6 +171,33 @@ class ApiClient {
       '/auth/change-password',
       body: {'currentPassword': currentPassword, 'newPassword': newPassword},
     );
+  }
+
+  Future<UserProfile> updateProfile({
+    required String fullName,
+    String? avatarUrl,
+    String? backgroundImageUrl,
+    DateTime? dateOfBirth,
+    String? bio,
+  }) async {
+    final json = await _request(
+      'PUT',
+      '/auth/profile',
+      body: {
+        'fullName': fullName.trim(),
+        'avatarUrl': _trimmedOrNull(avatarUrl),
+        'backgroundImageUrl': _trimmedOrNull(backgroundImageUrl),
+        'dateOfBirth': dateOfBirth?.toIso8601String().split('T').first,
+        'bio': _trimmedOrNull(bio),
+      },
+    );
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read updated profile response.');
+    }
+    final user = UserProfile.fromJson(data);
+    await _sessionStorage.write(_profileKey, jsonEncode(user.toJson()));
+    return user;
   }
 
   Future<List<Comic>> getComics() async {
@@ -285,6 +317,30 @@ class ApiClient {
     await _request('PUT', '/notifications/read-all');
   }
 
+  Future<NotificationPreferences> getNotificationPreferences() async {
+    final json = await _request('GET', '/notifications/preferences');
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read notification preferences.');
+    }
+    return NotificationPreferences.fromJson(data);
+  }
+
+  Future<NotificationPreferences> updateNotificationPreferences(
+    Map<String, bool> preferences,
+  ) async {
+    final json = await _request(
+      'PUT',
+      '/notifications/preferences',
+      body: {'preferences': preferences},
+    );
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read notification preferences.');
+    }
+    return NotificationPreferences.fromJson(data);
+  }
+
   Future<int> getUnreadNotificationCount() async {
     final json = await _request('GET', '/notifications/unread-count');
     final value = _unwrapData(json);
@@ -379,19 +435,24 @@ class ApiClient {
     final uri = Uri.parse('$baseUrl$path');
 
     try {
-      final request = await _httpClient.openUrl(method, uri).timeout(_timeout);
-      request.headers.contentType = ContentType.json;
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      request.headers.set('Accept-Language', _languageCode);
+      final request = http.Request(method, uri);
+      request.headers['Content-Type'] = 'application/json';
+      request.headers['Accept'] = 'application/json';
+      request.headers['Accept-Language'] = _languageCode;
       if (authorized && hasToken) {
-        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
+        request.headers['Authorization'] = 'Bearer $_token';
       }
       if (body != null) {
-        request.write(jsonEncode(body));
+        request.body = jsonEncode(body);
       }
 
-      final response = await request.close().timeout(_timeout);
-      final text = await response.transform(utf8.decoder).join();
+      final streamedResponse = await _httpClient
+          .send(request)
+          .timeout(_timeout);
+      final response = await http.Response.fromStream(
+        streamedResponse,
+      ).timeout(_timeout);
+      final text = utf8.decode(response.bodyBytes);
       final decoded = text.trim().isEmpty
           ? <String, dynamic>{}
           : jsonDecode(text);
@@ -408,7 +469,7 @@ class ApiClient {
         return decoded;
       }
       throw const ApiException('Unexpected backend response.');
-    } on SocketException {
+    } on http.ClientException {
       throw ApiException(
         'Cannot connect to backend. Check that Spring Boot is running at $baseUrl.',
       );
@@ -439,5 +500,10 @@ class ApiClient {
       return _parseComicList(data['data']);
     }
     return const [];
+  }
+
+  String? _trimmedOrNull(String? value) {
+    final trimmed = value?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
   }
 }

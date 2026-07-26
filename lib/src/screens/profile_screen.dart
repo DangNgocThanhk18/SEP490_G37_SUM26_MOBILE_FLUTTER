@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
 import '../l10n/app_localizations.dart';
+import '../models/notification_preferences.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/in_app_notification.dart';
 import 'premium_screen.dart';
+import 'support_legal_screens.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({
@@ -17,8 +19,11 @@ class ProfileScreen extends StatelessWidget {
     required this.onToggleTheme,
     required this.onOpenHistory,
     required this.onSignOut,
+    this.themeMode = ThemeMode.system,
+    this.onThemeModeChanged,
     this.locale = const Locale('en'),
     this.onLocaleChanged,
+    this.onUserChanged,
   });
 
   final ApiClient apiClient;
@@ -27,8 +32,11 @@ class ProfileScreen extends StatelessWidget {
   final VoidCallback onToggleTheme;
   final VoidCallback onOpenHistory;
   final VoidCallback onSignOut;
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode>? onThemeModeChanged;
   final Locale locale;
   final ValueChanged<Locale>? onLocaleChanged;
+  final ValueChanged<UserProfile>? onUserChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -174,7 +182,7 @@ class ProfileScreen extends StatelessWidget {
                 icon: Icons.person_outline_rounded,
                 title: context.tr('Personal Information'),
                 subtitle: user!.email,
-                onTap: () => _showProfileInfo(context),
+                onTap: () => _showEditProfile(context),
               ),
               _SettingsTile(
                 icon: Icons.lock_outline_rounded,
@@ -197,8 +205,14 @@ class ProfileScreen extends StatelessWidget {
                     ? Icons.dark_mode_outlined
                     : Icons.light_mode_outlined,
                 title: context.tr('Theme'),
-                value: context.tr(isDarkMode ? 'Dark' : 'Light'),
-                onTap: onToggleTheme,
+                value: context.tr(switch (themeMode) {
+                  ThemeMode.system => 'System',
+                  ThemeMode.light => 'Light',
+                  ThemeMode.dark => 'Dark',
+                }),
+                onTap: onThemeModeChanged == null
+                    ? onToggleTheme
+                    : () => _showThemePicker(context),
               ),
               _SettingsTile(
                 icon: Icons.language_rounded,
@@ -213,10 +227,12 @@ class ProfileScreen extends StatelessWidget {
               _SettingsTile(
                 icon: Icons.notifications_active_outlined,
                 title: context.tr('Notification Preferences'),
+                onTap: () => _showNotificationPreferences(context),
               ),
               _SettingsTile(
                 icon: Icons.download_outlined,
                 title: context.tr('Downloads'),
+                value: context.tr('Coming soon'),
               ),
             ],
           ),
@@ -227,14 +243,27 @@ class ProfileScreen extends StatelessWidget {
               _SettingsTile(
                 icon: Icons.help_outline_rounded,
                 title: context.tr('Help Center'),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const HelpCenterScreen()),
+                ),
               ),
               _SettingsTile(
                 icon: Icons.shield_outlined,
                 title: context.tr('Privacy Policy'),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const PrivacyPolicyScreen(),
+                  ),
+                ),
               ),
               _SettingsTile(
                 icon: Icons.description_outlined,
                 title: context.tr('Terms of Service'),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const TermsOfServiceScreen(),
+                  ),
+                ),
               ),
             ],
           ),
@@ -253,11 +282,27 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  void _showProfileInfo(BuildContext context) {
-    showModalBottomSheet<void>(
+  Future<void> _showEditProfile(BuildContext context) async {
+    final updated = await showModalBottomSheet<UserProfile>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _EditProfileSheet(apiClient: apiClient, user: user!),
+    );
+    if (updated == null || !context.mounted) return;
+    onUserChanged?.call(updated);
+    InAppNotifications.success(
+      context,
+      title: context.tr('Success'),
+      message: context.tr('Profile updated.'),
+    );
+  }
+
+  Future<void> _showThemePicker(BuildContext context) async {
+    final selected = await showModalBottomSheet<ThemeMode>(
       context: context,
       showDragHandle: true,
-      builder: (context) => SafeArea(
+      builder: (sheetContext) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
           child: Column(
@@ -265,33 +310,62 @@ class ProfileScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                context.tr('Personal Information'),
-                style: Theme.of(context).textTheme.headlineSmall,
+                sheetContext.tr('Select theme'),
+                style: Theme.of(sheetContext).textTheme.headlineSmall,
               ),
-              const SizedBox(height: 18),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.badge_outlined),
-                title: Text(context.tr('Display name')),
-                subtitle: Text(user!.displayName),
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.alternate_email_rounded),
-                title: Text(context.tr('Username')),
-                subtitle: Text(user!.username),
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.email_outlined),
-                title: Text(context.tr('Email')),
-                subtitle: Text(user!.email),
-              ),
+              const SizedBox(height: 14),
+              for (final option in ThemeMode.values)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Card(
+                    child: ListTile(
+                      minTileHeight: 60,
+                      leading: Icon(switch (option) {
+                        ThemeMode.system => Icons.brightness_auto_rounded,
+                        ThemeMode.light => Icons.light_mode_rounded,
+                        ThemeMode.dark => Icons.dark_mode_rounded,
+                      }),
+                      title: Text(
+                        sheetContext.tr(switch (option) {
+                          ThemeMode.system => 'System default',
+                          ThemeMode.light => 'Light',
+                          ThemeMode.dark => 'Dark',
+                        }),
+                      ),
+                      trailing: Icon(
+                        option == themeMode
+                            ? Icons.check_circle_rounded
+                            : Icons.radio_button_unchecked_rounded,
+                        color: option == themeMode
+                            ? Theme.of(sheetContext).colorScheme.primary
+                            : Theme.of(sheetContext).colorScheme.outline,
+                      ),
+                      onTap: () => Navigator.pop(sheetContext, option),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
       ),
     );
+    if (selected != null) onThemeModeChanged?.call(selected);
+  }
+
+  Future<void> _showNotificationPreferences(BuildContext context) async {
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _NotificationPreferencesSheet(apiClient: apiClient),
+    );
+    if (saved == true && context.mounted) {
+      InAppNotifications.success(
+        context,
+        title: context.tr('Success'),
+        message: context.tr('Notification preferences saved.'),
+      );
+    }
   }
 
   Future<void> _showLanguagePicker(BuildContext context) async {
@@ -481,6 +555,394 @@ class ProfileScreen extends StatelessWidget {
       '${value.month.toString().padLeft(2, '0')}/${value.year}';
 }
 
+class _EditProfileSheet extends StatefulWidget {
+  const _EditProfileSheet({required this.apiClient, required this.user});
+
+  final ApiClient apiClient;
+  final UserProfile user;
+
+  @override
+  State<_EditProfileSheet> createState() => _EditProfileSheetState();
+}
+
+class _EditProfileSheetState extends State<_EditProfileSheet> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _fullName;
+  late final TextEditingController _avatarUrl;
+  late final TextEditingController _backgroundImageUrl;
+  late final TextEditingController _bio;
+  DateTime? _dateOfBirth;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _fullName = TextEditingController(text: widget.user.displayName);
+    _avatarUrl = TextEditingController(text: widget.user.avatarUrl ?? '');
+    _backgroundImageUrl = TextEditingController(
+      text: widget.user.backgroundImageUrl ?? '',
+    );
+    _bio = TextEditingController(text: widget.user.bio ?? '');
+    _dateOfBirth = widget.user.dateOfBirth;
+  }
+
+  @override
+  void dispose() {
+    _fullName.dispose();
+    _avatarUrl.dispose();
+    _backgroundImageUrl.dispose();
+    _bio.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _dateOfBirth ?? DateTime(now.year - 18),
+      firstDate: DateTime(1900),
+      lastDate: now,
+    );
+    if (selected != null) setState(() => _dateOfBirth = selected);
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate() || _saving) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final updated = await widget.apiClient.updateProfile(
+        fullName: _fullName.text,
+        avatarUrl: _avatarUrl.text,
+        backgroundImageUrl: _backgroundImageUrl.text,
+        dateOfBirth: _dateOfBirth,
+        bio: _bio.text,
+      );
+      if (mounted) Navigator.pop(context, updated);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = context.localizedError(error);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          0,
+          20,
+          20 + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: SingleChildScrollView(
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  context.tr('Edit profile'),
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 18),
+                TextFormField(
+                  controller: _fullName,
+                  textInputAction: TextInputAction.next,
+                  decoration: InputDecoration(
+                    labelText: context.tr('Display name'),
+                    prefixIcon: const Icon(Icons.badge_outlined),
+                  ),
+                  validator: (value) => value == null || value.trim().isEmpty
+                      ? context.tr('Display name is required.')
+                      : null,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _avatarUrl,
+                  keyboardType: TextInputType.url,
+                  textInputAction: TextInputAction.next,
+                  decoration: InputDecoration(
+                    labelText: context.tr('Avatar URL'),
+                    prefixIcon: const Icon(Icons.account_circle_outlined),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _backgroundImageUrl,
+                  keyboardType: TextInputType.url,
+                  textInputAction: TextInputAction.next,
+                  decoration: InputDecoration(
+                    labelText: context.tr('Background image URL'),
+                    prefixIcon: const Icon(Icons.image_outlined),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.cake_outlined),
+                    title: Text(context.tr('Date of birth')),
+                    subtitle: Text(
+                      _dateOfBirth == null
+                          ? context.tr('Not set')
+                          : _dateOfBirth!.toIso8601String().split('T').first,
+                    ),
+                    trailing: _dateOfBirth == null
+                        ? const Icon(Icons.chevron_right_rounded)
+                        : IconButton(
+                            tooltip: context.tr('Clear'),
+                            onPressed: () =>
+                                setState(() => _dateOfBirth = null),
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                    onTap: _pickDate,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _bio,
+                  minLines: 3,
+                  maxLines: 5,
+                  maxLength: 1000,
+                  decoration: InputDecoration(
+                    labelText: context.tr('Bio'),
+                    alignLabelWithHint: true,
+                    prefixIcon: const Padding(
+                      padding: EdgeInsets.only(bottom: 72),
+                      child: Icon(Icons.notes_rounded),
+                    ),
+                  ),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _saving
+                            ? null
+                            : () => Navigator.pop(context),
+                        child: Text(context.tr('Cancel')),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: _saving ? null : _save,
+                        icon: _saving
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.save_outlined),
+                        label: Text(context.tr('Save changes')),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NotificationPreferencesSheet extends StatefulWidget {
+  const _NotificationPreferencesSheet({required this.apiClient});
+
+  final ApiClient apiClient;
+
+  @override
+  State<_NotificationPreferencesSheet> createState() =>
+      _NotificationPreferencesSheetState();
+}
+
+class _NotificationPreferencesSheetState
+    extends State<_NotificationPreferencesSheet> {
+  late Future<NotificationPreferences> _future = _load();
+  Map<String, bool> _values = {};
+  bool _loaded = false;
+  bool _saving = false;
+  String? _saveError;
+
+  Future<NotificationPreferences> _load() async {
+    final preferences = await widget.apiClient.getNotificationPreferences();
+    final values = Map<String, bool>.from(preferences.values);
+    if (mounted) {
+      setState(() {
+        _values = values;
+        _loaded = true;
+      });
+    } else {
+      _values = values;
+      _loaded = true;
+    }
+    return preferences;
+  }
+
+  void _retry() {
+    setState(() {
+      _saveError = null;
+      _loaded = false;
+      _future = _load();
+    });
+  }
+
+  Future<void> _save() async {
+    if (_saving || !_loaded) return;
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+    try {
+      await widget.apiClient.updateNotificationPreferences(_values);
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _saveError = context.localizedError(error);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * 0.72,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                context.tr('Notification Preferences'),
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                context.tr('Choose which in-app notifications you receive.'),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: FutureBuilder<NotificationPreferences>(
+                  future: _future,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (snapshot.hasError) {
+                      return ApiErrorState(
+                        error: snapshot.error!,
+                        onRetry: _retry,
+                      );
+                    }
+                    final keys = snapshot.data?.availableKeys ?? const [];
+                    if (keys.isEmpty) {
+                      return EmptyState(
+                        icon: Icons.notifications_off_outlined,
+                        message: context.tr(
+                          'No notification preferences are available.',
+                        ),
+                      );
+                    }
+                    return ListView.separated(
+                      itemCount: keys.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final key = keys[index];
+                        return SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          secondary: Icon(_notificationIcon(key)),
+                          title: Text(_notificationLabel(context, key)),
+                          value: _values[key] ?? true,
+                          onChanged: _saving
+                              ? null
+                              : (value) => setState(() => _values[key] = value),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+              if (_saveError != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _saveError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _saving || !_loaded ? null : _save,
+                  icon: _saving
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save_outlined),
+                  label: Text(context.tr('Save preferences')),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _notificationLabel(BuildContext context, String key) {
+    return context.tr(switch (key) {
+      'SYSTEM_BROADCASTS' => 'System announcements',
+      'FORUM_ACTIVITY' => 'Forum activity',
+      'REVIEW_QUEUE' => 'Review queue',
+      'SUBMISSION_STATUS' => 'Submission status',
+      'PROJECT_OPPORTUNITIES' => 'Project opportunities',
+      'TEAM_UPDATES' => 'Team updates',
+      'TEAM_JOIN_REQUESTS' => 'Team join requests',
+      _ => key.replaceAll('_', ' '),
+    });
+  }
+
+  IconData _notificationIcon(String key) {
+    return switch (key) {
+      'SYSTEM_BROADCASTS' => Icons.campaign_outlined,
+      'FORUM_ACTIVITY' => Icons.forum_outlined,
+      'REVIEW_QUEUE' => Icons.rate_review_outlined,
+      'SUBMISSION_STATUS' => Icons.fact_check_outlined,
+      'PROJECT_OPPORTUNITIES' => Icons.work_outline_rounded,
+      'TEAM_UPDATES' => Icons.groups_outlined,
+      'TEAM_JOIN_REQUESTS' => Icons.group_add_outlined,
+      _ => Icons.notifications_outlined,
+    };
+  }
+}
+
 class _SettingsGroup extends StatelessWidget {
   const _SettingsGroup({required this.title, required this.children});
 
@@ -541,9 +1003,19 @@ class _SettingsTile extends StatelessWidget {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (value != null) Text(value!),
-          const SizedBox(width: 4),
-          const Icon(Icons.chevron_right_rounded, size: 18),
+          if (value != null)
+            Text(
+              value!,
+              style: TextStyle(
+                color: onTap == null
+                    ? Theme.of(context).colorScheme.outline
+                    : null,
+              ),
+            ),
+          if (onTap != null) ...[
+            const SizedBox(width: 4),
+            const Icon(Icons.chevron_right_rounded, size: 18),
+          ],
         ],
       ),
       onTap: onTap,
