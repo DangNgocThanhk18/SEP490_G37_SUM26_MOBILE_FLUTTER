@@ -8,6 +8,13 @@ abstract interface class AppPreferences {
   Future<String?> readThemeMode();
 
   Future<void> writeThemeMode(String themeMode);
+
+  /// Ngôn ngữ bản dịch manga user muốn đọc (ví dụ: "vi", "en", "jp").
+  /// Khác với [readLanguageCode] (ngôn ngữ giao diện app).
+  /// Trả về null = đọc bản gốc (không overlay bubble dịch).
+  Future<String?> readPreferredReadingLanguage();
+
+  Future<void> writePreferredReadingLanguage(String? languageCode);
 }
 
 class SecureAppPreferences implements AppPreferences {
@@ -16,6 +23,7 @@ class SecureAppPreferences implements AppPreferences {
 
   static const _languageKey = 'comiverse_language';
   static const _themeModeKey = 'comiverse_theme_mode';
+  static const _preferredReadingLangKey = 'comiverse_reading_language';
 
   final FlutterSecureStorage _storage;
 
@@ -32,4 +40,17 @@ class SecureAppPreferences implements AppPreferences {
   @override
   Future<void> writeThemeMode(String themeMode) =>
       _storage.write(key: _themeModeKey, value: themeMode);
+
+  @override
+  Future<String?> readPreferredReadingLanguage() =>
+      _storage.read(key: _preferredReadingLangKey);
+
+  @override
+  Future<void> writePreferredReadingLanguage(String? languageCode) async {
+    if (languageCode == null) {
+      await _storage.delete(key: _preferredReadingLangKey);
+    } else {
+      await _storage.write(key: _preferredReadingLangKey, value: languageCode);
+    }
+  }
 }
