@@ -41,9 +41,9 @@ class ApiClient {
     SessionStorage? sessionStorage,
     http.Client? httpClient,
   }) : baseUrl = resolveBaseUrl(baseUrl),
-       _timeout = timeout,
-       _sessionStorage = sessionStorage ?? const SecureSessionStorage(),
-       _httpClient = httpClient ?? http.Client();
+        _timeout = timeout,
+        _sessionStorage = sessionStorage ?? const SecureSessionStorage(),
+        _httpClient = httpClient ?? http.Client();
 
   static String resolveBaseUrl([String? override]) {
     const configured = String.fromEnvironment('API_BASE_URL');
@@ -327,8 +327,8 @@ class ApiClient {
   }
 
   Future<NotificationPreferences> updateNotificationPreferences(
-    Map<String, bool> preferences,
-  ) async {
+      Map<String, bool> preferences,
+      ) async {
     final json = await _request(
       'PUT',
       '/notifications/preferences',
@@ -426,12 +426,45 @@ class ApiClient {
     return ChapterDetail.fromJson(data);
   }
 
+  /// Every language a comic has at least one translated chapter in — used
+  /// to build the reader's language picker before the reader even knows
+  /// which chapter they'll open.
+  Future<List<String>> getComicTranslationLanguages(String comicId) async {
+    final json = await _request(
+      'GET',
+      '/comics/$comicId/translation-languages',
+      authorized: false,
+    );
+    final data = _unwrapData(json);
+    if (data is! List) return const [];
+    return data.map((item) => item.toString()).toList();
+  }
+
+  /// Every translation available for a specific chapter (language + its
+  /// per-page bubbles). May be a subset of getComicTranslationLanguages
+  /// if some languages haven't reached this particular chapter yet.
+  Future<List<ChapterTranslation>> getChapterTranslations(
+      String chapterId,
+      ) async {
+    final json = await _request(
+      'GET',
+      '/chapters/$chapterId/translations',
+      authorized: false,
+    );
+    final data = _unwrapData(json);
+    if (data is! List) return const [];
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(ChapterTranslation.fromJson)
+        .toList();
+  }
+
   Future<Map<String, dynamic>> _request(
-    String method,
-    String path, {
-    Map<String, dynamic>? body,
-    bool authorized = true,
-  }) async {
+      String method,
+      String path, {
+        Map<String, dynamic>? body,
+        bool authorized = true,
+      }) async {
     final uri = Uri.parse('$baseUrl$path');
 
     try {
@@ -460,7 +493,7 @@ class ApiClient {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final message = decoded is Map<String, dynamic>
             ? (decoded['message'] ?? decoded['error'] ?? 'Request failed')
-                  .toString()
+            .toString()
             : 'Request failed';
         throw ApiException(message);
       }

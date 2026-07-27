@@ -180,6 +180,7 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
               locale: _locale,
               onLocaleChanged: _changeLocale,
               onUserChanged: _handleUserChanged,
+              preferences: _preferences,
             )
           : LoginScreen(
               apiClient: _apiClient,

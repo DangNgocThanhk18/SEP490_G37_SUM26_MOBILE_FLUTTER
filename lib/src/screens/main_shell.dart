@@ -9,6 +9,7 @@ import '../models/comic.dart';
 import '../models/notification_destination.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
+import '../services/app_preferences.dart';
 import '../widgets/in_app_notification.dart';
 import 'comic_detail_screen.dart';
 import 'explore_screen.dart';
@@ -33,6 +34,7 @@ class MainShell extends StatefulWidget {
     this.locale = const Locale('en'),
     this.onLocaleChanged,
     this.onUserChanged,
+    this.preferences,
   });
 
   final ApiClient apiClient;
@@ -45,6 +47,7 @@ class MainShell extends StatefulWidget {
   final Locale locale;
   final ValueChanged<Locale>? onLocaleChanged;
   final ValueChanged<UserProfile>? onUserChanged;
+  final AppPreferences? preferences;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -184,7 +187,11 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         widget.apiClient.getComicDetail(comicId),
       );
       if (!mounted) return;
-      await _push(ComicDetailScreen(apiClient: widget.apiClient, comic: comic));
+      await _push(ComicDetailScreen(
+        apiClient: widget.apiClient,
+        comic: comic,
+        preferences: widget.preferences,
+      ));
     } catch (error) {
       if (!mounted) return;
       _showMessage(context.localizedError(error));

@@ -96,6 +96,7 @@ const _reader = UserProfile(
 class _MemoryAppPreferences implements AppPreferences {
   String? languageCode;
   String? themeMode;
+  String? preferredReadingLanguage;
 
   @override
   Future<String?> readLanguageCode() async => languageCode;
@@ -111,6 +112,14 @@ class _MemoryAppPreferences implements AppPreferences {
   @override
   Future<void> writeThemeMode(String themeMode) async {
     this.themeMode = themeMode;
+  }
+
+  @override
+  Future<String?> readPreferredReadingLanguage() async => preferredReadingLanguage;
+
+  @override
+  Future<void> writePreferredReadingLanguage(String? languageCode) async {
+    preferredReadingLanguage = languageCode;
   }
 }
 
