@@ -169,6 +169,10 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+    expect(
+      find.byKey(const ValueKey('reader-copyright-watermark')),
+      findsOneWidget,
+    );
 
     await tester.pumpWidget(
       testApp(PremiumScreen(apiClient: apiClient, user: _FakeApiClient.user)),

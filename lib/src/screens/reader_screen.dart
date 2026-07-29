@@ -1,12 +1,394 @@
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 
 import '../l10n/app_localizations.dart';
 import '../models/chapter.dart';
 import '../services/api_client.dart';
 import '../services/app_preferences.dart';
+import '../services/screen_capture_protection.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+
+abstract final class ReaderImageLoadingPolicy {
+  static const int preloadAheadCount = 4;
+
+  static List<String> urlsToPreload(List<String> urls, int pageIndex) {
+    if (urls.isEmpty || pageIndex < 0 || pageIndex >= urls.length) {
+      return const [];
+    }
+    final result = <String>[];
+    for (
+      var index = pageIndex + 1;
+      index < urls.length && result.length < preloadAheadCount;
+      index++
+    ) {
+      result.add(urls[index]);
+    }
+    return result;
+  }
+}
+
+abstract final class ReaderZoomPolicy {
+  static const double minScale = 1;
+  static const double maxScale = 4;
+  static const double doubleTapScale = 2.5;
+  static const double autoFitThreshold = 1.12;
+  static const double highResolutionThreshold = 1.35;
+
+  static double clampScale(double scale) =>
+      scale.clamp(minScale, maxScale).toDouble();
+
+  static bool shouldAutoFit(double scale) => scale <= autoFitThreshold;
+}
+
+class ReaderZoomSurface extends StatefulWidget {
+  const ReaderZoomSurface({
+    super.key,
+    required this.child,
+    required this.resetGeneration,
+    required this.onScrollLockChanged,
+    this.onHighResolutionChanged,
+  });
+
+  final Widget child;
+  final int resetGeneration;
+  final ValueChanged<bool> onScrollLockChanged;
+  final ValueChanged<bool>? onHighResolutionChanged;
+
+  @override
+  State<ReaderZoomSurface> createState() => _ReaderZoomSurfaceState();
+}
+
+class _ReaderZoomSurfaceState extends State<ReaderZoomSurface>
+    with SingleTickerProviderStateMixin {
+  final TransformationController _transformationController =
+      TransformationController();
+  final Map<int, Offset> _pointers = {};
+  late final AnimationController _animationController;
+  Animation<double>? _scaleAnimation;
+  Animation<Offset>? _translationAnimation;
+  Size _viewportSize = Size.zero;
+  double _scale = ReaderZoomPolicy.minScale;
+  Offset _translation = Offset.zero;
+  double? _pinchStartDistance;
+  double? _pinchStartScale;
+  Offset? _pinchSceneFocalPoint;
+  Offset? _doubleTapPosition;
+  double? _panZoomStartScale;
+  Offset? _panZoomSceneFocalPoint;
+  bool _scrollLocked = false;
+  bool _highResolutionRequested = false;
+  bool _viewportResetScheduled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController =
+        AnimationController(
+            vsync: this,
+            duration: const Duration(milliseconds: 220),
+          )
+          ..addListener(_handleAnimationTick)
+          ..addStatusListener(_handleAnimationStatus);
+  }
+
+  @override
+  void didUpdateWidget(covariant ReaderZoomSurface oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.resetGeneration != widget.resetGeneration) {
+      _animateToFit();
+    }
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    _transformationController.dispose();
+    super.dispose();
+  }
+
+  void _handleAnimationTick() {
+    final scaleAnimation = _scaleAnimation;
+    final translationAnimation = _translationAnimation;
+    if (scaleAnimation == null || translationAnimation == null) return;
+    _setTransform(
+      scaleAnimation.value,
+      translationAnimation.value,
+      notifyScrollLock: false,
+    );
+  }
+
+  void _handleAnimationStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    _notifyScrollLock(_scale > ReaderZoomPolicy.minScale + 0.001);
+    _notifyHighResolution(_scale >= ReaderZoomPolicy.highResolutionThreshold);
+  }
+
+  void _setTransform(
+    double scale,
+    Offset translation, {
+    bool notifyScrollLock = true,
+  }) {
+    _scale = ReaderZoomPolicy.clampScale(scale);
+    _translation = _clampTranslation(translation, _scale);
+    _transformationController.value = Matrix4.identity()
+      ..translateByDouble(_translation.dx, _translation.dy, 0, 1)
+      ..scaleByDouble(_scale, _scale, 1, 1);
+    if (notifyScrollLock) {
+      _notifyScrollLock(_scale > ReaderZoomPolicy.minScale + 0.001);
+    }
+  }
+
+  Offset _clampTranslation(Offset translation, double scale) {
+    if (_viewportSize.isEmpty || scale <= ReaderZoomPolicy.minScale) {
+      return Offset.zero;
+    }
+    final minX = _viewportSize.width * (1 - scale);
+    final minY = _viewportSize.height * (1 - scale);
+    return Offset(
+      translation.dx.clamp(minX, 0).toDouble(),
+      translation.dy.clamp(minY, 0).toDouble(),
+    );
+  }
+
+  void _notifyScrollLock(bool locked) {
+    if (_scrollLocked == locked) return;
+    _scrollLocked = locked;
+    widget.onScrollLockChanged(locked);
+  }
+
+  void _notifyHighResolution(bool requested) {
+    if (_highResolutionRequested == requested) return;
+    _highResolutionRequested = requested;
+    widget.onHighResolutionChanged?.call(requested);
+  }
+
+  void _handlePointerDown(PointerDownEvent event) {
+    _animationController.stop();
+    _pointers[event.pointer] = event.localPosition;
+    if (_pointers.length >= 2) {
+      _beginPinch();
+      _notifyScrollLock(true);
+    }
+  }
+
+  void _beginPinch() {
+    final points = _pointers.values.take(2).toList(growable: false);
+    if (points.length < 2) return;
+    final focalPoint = Offset(
+      (points[0].dx + points[1].dx) / 2,
+      (points[0].dy + points[1].dy) / 2,
+    );
+    _pinchStartDistance = (points[0] - points[1]).distance.clamp(
+      1,
+      double.infinity,
+    );
+    _pinchStartScale = _scale;
+    _pinchSceneFocalPoint = Offset(
+      (focalPoint.dx - _translation.dx) / _scale,
+      (focalPoint.dy - _translation.dy) / _scale,
+    );
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    final previousPosition = _pointers[event.pointer];
+    if (previousPosition == null) return;
+    _pointers[event.pointer] = event.localPosition;
+
+    if (_pointers.length >= 2 &&
+        _pinchStartDistance != null &&
+        _pinchStartScale != null &&
+        _pinchSceneFocalPoint != null) {
+      final points = _pointers.values.take(2).toList(growable: false);
+      final distance = (points[0] - points[1]).distance;
+      final focalPoint = Offset(
+        (points[0].dx + points[1].dx) / 2,
+        (points[0].dy + points[1].dy) / 2,
+      );
+      final nextScale = ReaderZoomPolicy.clampScale(
+        _pinchStartScale! * distance / _pinchStartDistance!,
+      );
+      final sceneFocalPoint = _pinchSceneFocalPoint!;
+      _setTransform(
+        nextScale,
+        Offset(
+          focalPoint.dx - sceneFocalPoint.dx * nextScale,
+          focalPoint.dy - sceneFocalPoint.dy * nextScale,
+        ),
+        notifyScrollLock: false,
+      );
+      _notifyScrollLock(true);
+      return;
+    }
+
+    if (_pointers.length == 1 && _scale > ReaderZoomPolicy.minScale + 0.001) {
+      _setTransform(
+        _scale,
+        _translation + event.localPosition - previousPosition,
+      );
+    }
+  }
+
+  void _handlePointerEnd(PointerEvent event) {
+    final wasPinching = _pointers.length >= 2;
+    _pointers.remove(event.pointer);
+    if (wasPinching) {
+      _pinchStartDistance = null;
+      _pinchStartScale = null;
+      _pinchSceneFocalPoint = null;
+      if (_pointers.length >= 2) _beginPinch();
+    }
+
+    if (_pointers.isNotEmpty) {
+      _notifyScrollLock(true);
+      return;
+    }
+
+    if (_scrollLocked && ReaderZoomPolicy.shouldAutoFit(_scale)) {
+      _animateToFit();
+    } else if (_scale > ReaderZoomPolicy.minScale + 0.001) {
+      _notifyScrollLock(true);
+      _notifyHighResolution(_scale >= ReaderZoomPolicy.highResolutionThreshold);
+    }
+  }
+
+  void _handleDoubleTap() {
+    if (_scale > ReaderZoomPolicy.minScale + 0.001) {
+      _animateToFit();
+      return;
+    }
+    final focalPoint = _doubleTapPosition ?? _viewportSize.center(Offset.zero);
+    final targetScale = ReaderZoomPolicy.doubleTapScale;
+    _notifyScrollLock(true);
+    _animateTo(
+      targetScale,
+      Offset(
+        focalPoint.dx - focalPoint.dx * targetScale,
+        focalPoint.dy - focalPoint.dy * targetScale,
+      ),
+    );
+  }
+
+  void _handlePanZoomStart(PointerPanZoomStartEvent event) {
+    _animationController.stop();
+    _panZoomStartScale = _scale;
+    _panZoomSceneFocalPoint = Offset(
+      (event.localPosition.dx - _translation.dx) / _scale,
+      (event.localPosition.dy - _translation.dy) / _scale,
+    );
+  }
+
+  void _handlePanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    final startScale = _panZoomStartScale;
+    final sceneFocalPoint = _panZoomSceneFocalPoint;
+    if (startScale == null || sceneFocalPoint == null) return;
+    final isScaleGesture = (event.scale - 1).abs() > 0.001;
+    if (!isScaleGesture && _scale <= ReaderZoomPolicy.minScale + 0.001) {
+      return;
+    }
+
+    final nextScale = ReaderZoomPolicy.clampScale(startScale * event.scale);
+    final focalPoint = event.localPosition + event.localPan;
+    _setTransform(
+      nextScale,
+      Offset(
+        focalPoint.dx - sceneFocalPoint.dx * nextScale,
+        focalPoint.dy - sceneFocalPoint.dy * nextScale,
+      ),
+      notifyScrollLock: false,
+    );
+    _notifyScrollLock(true);
+  }
+
+  void _handlePanZoomEnd(PointerPanZoomEndEvent event) {
+    _panZoomStartScale = null;
+    _panZoomSceneFocalPoint = null;
+    if (_scrollLocked && ReaderZoomPolicy.shouldAutoFit(_scale)) {
+      _animateToFit();
+    } else {
+      _notifyHighResolution(_scale >= ReaderZoomPolicy.highResolutionThreshold);
+    }
+  }
+
+  void _animateToFit() {
+    _notifyHighResolution(false);
+    _animateTo(ReaderZoomPolicy.minScale, Offset.zero);
+  }
+
+  void _animateTo(double targetScale, Offset targetTranslation) {
+    _animationController.stop();
+    final curvedAnimation = CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOutCubic,
+    );
+    _scaleAnimation = Tween<double>(
+      begin: _scale,
+      end: ReaderZoomPolicy.clampScale(targetScale),
+    ).animate(curvedAnimation);
+    _translationAnimation = Tween<Offset>(
+      begin: _translation,
+      end: _clampTranslation(targetTranslation, targetScale),
+    ).animate(curvedAnimation);
+    _animationController
+      ..reset()
+      ..forward();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final nextViewportSize = constraints.biggest;
+        if (_viewportSize != Size.zero &&
+            _viewportSize != nextViewportSize &&
+            _scale > ReaderZoomPolicy.minScale + 0.001 &&
+            !_viewportResetScheduled) {
+          _viewportResetScheduled = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _viewportResetScheduled = false;
+            if (mounted) _animateToFit();
+          });
+        }
+        _viewportSize = nextViewportSize;
+        return ClipRect(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onDoubleTapDown: (details) {
+              _doubleTapPosition = details.localPosition;
+            },
+            onDoubleTap: _handleDoubleTap,
+            child: Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: _handlePointerDown,
+              onPointerMove: _handlePointerMove,
+              onPointerUp: _handlePointerEnd,
+              onPointerCancel: _handlePointerEnd,
+              onPointerPanZoomStart: _handlePanZoomStart,
+              onPointerPanZoomUpdate: _handlePanZoomUpdate,
+              onPointerPanZoomEnd: _handlePanZoomEnd,
+              child: AnimatedBuilder(
+                animation: _transformationController,
+                child: widget.child,
+                builder: (context, child) => Transform(
+                  key: const ValueKey('reader-zoom-transform'),
+                  transform: _transformationController.value,
+                  alignment: Alignment.topLeft,
+                  child: child,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
 
 class ReaderScreen extends StatefulWidget {
   const ReaderScreen({
@@ -17,6 +399,7 @@ class ReaderScreen extends StatefulWidget {
     this.comicTitle,
     this.initialLanguage,
     this.preferences,
+    this.viewerWatermark,
   });
 
   final ApiClient apiClient;
@@ -25,6 +408,7 @@ class ReaderScreen extends StatefulWidget {
   final String? comicTitle;
   final String? initialLanguage;
   final AppPreferences? preferences;
+  final String? viewerWatermark;
 
   @override
   State<ReaderScreen> createState() => _ReaderScreenState();
@@ -32,13 +416,25 @@ class ReaderScreen extends StatefulWidget {
 
 class _ReaderScreenState extends State<ReaderScreen> {
   final ScrollController _scrollController = ScrollController();
+  final ValueNotifier<double> _progressNotifier = ValueNotifier<double>(0);
+  final ValueNotifier<bool> _controlsVisibleNotifier = ValueNotifier<bool>(
+    true,
+  );
   late Future<ChapterDetail> _futureChapter;
   late Future<List<ChapterTranslation>> _futureTranslations;
   late int _currentIndex;
-  bool _showControls = true;
   double _lastOffset = 0;
-  double _progress = 0;
+  final Set<String> _scheduledImagePreloads = {};
+  final Map<String, double> _pageAspectRatios = {};
+  Set<int> _highResolutionPageIndexes = const {};
+  bool _readerGestureLocked = false;
+  ScrollHoldController? _scrollHoldController;
+  int _zoomResetGeneration = 0;
+  int _preloadAnchorPageIndex = -ReaderImageLoadingPolicy.preloadAheadCount;
+  int _preloadGeneration = 0;
+  Future<void> _preloadQueue = Future<void>.value();
   late String? _selectedLanguage; // null = original (no bubble overlay)
+  bool _captureProtectionAcquired = false;
 
   ChapterLite get _chapter => widget.chapters[_currentIndex];
 
@@ -52,10 +448,20 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _futureChapter = widget.apiClient.getChapterDetail(_chapter.id);
     _futureTranslations = widget.apiClient.getChapterTranslations(_chapter.id);
     _scrollController.addListener(_handleScroll);
+    _captureProtectionAcquired = true;
+    unawaited(ScreenCaptureProtection.acquire());
   }
 
   @override
   void dispose() {
+    _preloadGeneration++;
+    _releaseScrollHold();
+    if (_captureProtectionAcquired) {
+      _captureProtectionAcquired = false;
+      unawaited(ScreenCaptureProtection.release());
+    }
+    _controlsVisibleNotifier.dispose();
+    _progressNotifier.dispose();
     _scrollController
       ..removeListener(_handleScroll)
       ..dispose();
@@ -67,12 +473,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final delta = offset - _lastOffset;
     final max = _scrollController.position.maxScrollExtent;
     final nextProgress = max <= 0 ? 0.0 : (offset / max).clamp(0.0, 1.0);
-    if (delta > 10 && _showControls) {
-      setState(() => _showControls = false);
-    } else if (delta < -10 && !_showControls) {
-      setState(() => _showControls = true);
-    } else if ((nextProgress - _progress).abs() > 0.01) {
-      setState(() => _progress = nextProgress);
+    if (delta > 10 && _controlsVisibleNotifier.value) {
+      _controlsVisibleNotifier.value = false;
+    } else if (delta < -10 && !_controlsVisibleNotifier.value) {
+      _controlsVisibleNotifier.value = true;
+    }
+    if ((nextProgress - _progressNotifier.value).abs() > 0.01 ||
+        nextProgress == 0 ||
+        nextProgress == 1) {
+      _progressNotifier.value = nextProgress;
     }
     _lastOffset = offset;
   }
@@ -80,23 +489,138 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void _openChapter(int index) {
     if (index < 0 || index >= widget.chapters.length) return;
     setState(() {
+      _readerGestureLocked = false;
+      _highResolutionPageIndexes = const {};
+      _zoomResetGeneration++;
       _currentIndex = index;
+      _scheduledImagePreloads.clear();
+      _pageAspectRatios.clear();
+      _preloadAnchorPageIndex = -ReaderImageLoadingPolicy.preloadAheadCount;
+      _preloadGeneration++;
+      _preloadQueue = Future<void>.value();
       _futureChapter = widget.apiClient.getChapterDetail(_chapter.id);
       _futureTranslations = widget.apiClient.getChapterTranslations(
         _chapter.id,
       );
-      _showControls = true;
-      _progress = 0;
+      _lastOffset = 0;
     });
+    _releaseScrollHold();
+    _controlsVisibleNotifier.value = true;
+    _progressNotifier.value = 0;
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(0);
+    }
+  }
+
+  void _handleReaderZoomLock(bool locked) {
+    if (_readerGestureLocked == locked) return;
+    if (locked && _scrollController.hasClients) {
+      _scrollHoldController?.cancel();
+      _scrollHoldController = _scrollController.position.hold(() {
+        _scrollHoldController = null;
+      });
+    }
+    setState(() {
+      _readerGestureLocked = locked;
+    });
+    if (locked) _controlsVisibleNotifier.value = false;
+    if (!locked) _releaseScrollHold();
+  }
+
+  void _releaseScrollHold() {
+    final holdController = _scrollHoldController;
+    _scrollHoldController = null;
+    holdController?.cancel();
+  }
+
+  void _handleHighResolutionChanged(bool enabled, List<String> imageUrls) {
+    final nextIndexes = enabled
+        ? _visiblePageIndexes(imageUrls)
+        : const <int>{};
+    if (_highResolutionPageIndexes.length == nextIndexes.length &&
+        _highResolutionPageIndexes.containsAll(nextIndexes)) {
+      return;
+    }
+    setState(() => _highResolutionPageIndexes = nextIndexes);
+  }
+
+  Set<int> _visiblePageIndexes(List<String> imageUrls) {
+    if (imageUrls.isEmpty) return const {};
+    final screenSize = MediaQuery.sizeOf(context);
+    final pageWidth = screenSize.width.clamp(0.0, 680.0);
+    final viewportTop = _scrollController.hasClients
+        ? _scrollController.offset
+        : 0.0;
+    final viewportBottom = viewportTop + screenSize.height;
+    var pageTop = 68.0;
+    final result = <int>{};
+    for (var index = 0; index < imageUrls.length; index++) {
+      final ratio = _pageAspectRatios[imageUrls[index]] ?? 0.68;
+      final pageHeight = pageWidth / ratio;
+      final pageBottom = pageTop + pageHeight;
+      if (pageBottom >= viewportTop && pageTop <= viewportBottom) {
+        result.add(index);
+      }
+      if (pageTop > viewportBottom) break;
+      pageTop = pageBottom;
+    }
+    return result;
+  }
+
+  void _resetReaderZoom() {
+    setState(() => _zoomResetGeneration++);
+  }
+
+  void _preloadFollowingPages(List<String> urls, int pageIndex) {
+    if (pageIndex <
+        _preloadAnchorPageIndex + ReaderImageLoadingPolicy.preloadAheadCount) {
+      return;
+    }
+    _preloadAnchorPageIndex = pageIndex;
+    final targets = ReaderImageLoadingPolicy.urlsToPreload(
+      urls,
+      pageIndex,
+    ).where(_scheduledImagePreloads.add).toList(growable: false);
+    if (targets.isEmpty) return;
+
+    final generation = _preloadGeneration;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _preloadQueue = _preloadQueue.then(
+        (_) => _precachePagesSequentially(targets, generation),
+      );
+    });
+  }
+
+  Future<void> _precachePagesSequentially(
+    List<String> urls,
+    int generation,
+  ) async {
+    for (final url in urls) {
+      if (!mounted || generation != _preloadGeneration) return;
+      var failed = false;
+      try {
+        await precacheImage(
+          _readerImageProvider(url, context),
+          context,
+          onError: (_, _) => failed = true,
+        );
+      } catch (_) {
+        failed = true;
+      }
+      if (failed) _scheduledImagePreloads.remove(url);
     }
   }
 
   /// Persist language khi user đổi trong reader; cũng notify detail screen
   /// khi pop qua _restoreReadingLanguage().
   void _onLanguageSelected(String? lang) {
-    setState(() => _selectedLanguage = lang);
+    setState(() {
+      _readerGestureLocked = false;
+      _highResolutionPageIndexes = const {};
+      _zoomResetGeneration++;
+      _selectedLanguage = lang;
+    });
+    _releaseScrollHold();
     widget.preferences?.writePreferredReadingLanguage(lang).catchError((_) {});
   }
 
@@ -119,6 +643,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Future<void> _backToTop() async {
     if (!_scrollController.hasClients) return;
+    if (_readerGestureLocked) {
+      _resetReaderZoom();
+      await Future<void>.delayed(const Duration(milliseconds: 230));
+      if (!mounted || !_scrollController.hasClients) return;
+    }
     await _scrollController.animateTo(
       0,
       duration: const Duration(milliseconds: 280),
@@ -135,148 +664,244 @@ class _ReaderScreenState extends State<ReaderScreen> {
         ? SystemUiOverlayStyle.light
         : SystemUiOverlayStyle.dark;
 
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: overlayStyle.copyWith(
-        statusBarColor: tokens.readerBackground,
-        systemNavigationBarColor: tokens.readerBackground,
-      ),
-      child: Scaffold(
-        backgroundColor: tokens.readerBackground,
-        body: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onTap: () => setState(() => _showControls = !_showControls),
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: FutureBuilder<ChapterDetail>(
-                  future: _futureChapter,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    if (snapshot.hasError) {
-                      return ApiErrorState(
-                        error: snapshot.error!,
-                        onRetry: () => setState(
-                              () => _futureChapter = widget.apiClient
-                              .getChapterDetail(_chapter.id),
-                        ),
-                      );
-                    }
-                    final chapter = snapshot.data;
-                    if (chapter == null || chapter.images.isEmpty) {
-                      return EmptyState(
-                        icon: Icons.broken_image_outlined,
-                        message: context.tr(
-                          'No chapter pages were returned by the backend.',
-                        ),
-                      );
-                    }
-                    return FutureBuilder<List<ChapterTranslation>>(
-                      future: _futureTranslations,
-                      builder: (context, translationsSnapshot) {
-                        final translations =
-                            translationsSnapshot.data ??
-                                const <ChapterTranslation>[];
-                        ChapterTranslation? activeTranslation;
-                        if (_selectedLanguage != null) {
-                          for (final t in translations) {
-                            if (t.languageCode == _selectedLanguage) {
-                              activeTranslation = t;
-                              break;
-                            }
-                          }
-                        }
-                        return Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 680),
-                            child: ListView.builder(
-                              key: ValueKey(
-                                '${chapter.id}-${_selectedLanguage ?? 'original'}',
-                              ),
-                              controller: _scrollController,
-                              padding: const EdgeInsets.only(
-                                top: 68,
-                                bottom: 100,
-                              ),
-                              itemCount: chapter.images.length + 1,
-                              itemBuilder: (context, index) {
-                                if (index == chapter.images.length) {
-                                  return _ReaderEnd(
-                                    hasPrevious: _currentIndex > 0,
-                                    hasNext:
-                                    _currentIndex <
-                                        widget.chapters.length - 1,
-                                    onPrevious: () =>
-                                        _openChapter(_currentIndex - 1),
-                                    onNext: () =>
-                                        _openChapter(_currentIndex + 1),
-                                    onBackToTop: _backToTop,
-                                  );
-                                }
-                                final bubbles =
-                                    activeTranslation?.bubblesForPage(
-                                      index + 1,
-                                    ) ??
-                                        const <BubbleSelection>[];
-                                return _BubbleOverlayImage(
-                                  imageUrl: chapter.images[index],
-                                  bubbles: bubbles,
-                                  placeholderColor: tokens.surfaceSubtle,
-                                  errorLabel: context.tr(
-                                    'Cannot load page {page}',
-                                    values: {'page': index + 1},
-                                  ),
-                                );
-                              },
-                            ),
+    return PopScope(
+      canPop: !_readerGestureLocked,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _readerGestureLocked) _resetReaderZoom();
+      },
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: overlayStyle.copyWith(
+          statusBarColor: tokens.readerBackground,
+          systemNavigationBarColor: tokens.readerBackground,
+        ),
+        child: Scaffold(
+          backgroundColor: tokens.readerBackground,
+          body: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () => _controlsVisibleNotifier.value =
+                !_controlsVisibleNotifier.value,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: FutureBuilder<ChapterDetail>(
+                    future: _futureChapter,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (snapshot.hasError) {
+                        return ApiErrorState(
+                          error: snapshot.error!,
+                          onRetry: () => setState(
+                            () => _futureChapter = widget.apiClient
+                                .getChapterDetail(_chapter.id),
                           ),
                         );
-                      },
-                    );
-                  },
+                      }
+                      final chapter = snapshot.data;
+                      if (chapter == null || chapter.images.isEmpty) {
+                        return EmptyState(
+                          icon: Icons.broken_image_outlined,
+                          message: context.tr(
+                            'No chapter pages were returned by the backend.',
+                          ),
+                        );
+                      }
+                      return FutureBuilder<List<ChapterTranslation>>(
+                        future: _futureTranslations,
+                        builder: (context, translationsSnapshot) {
+                          final translations =
+                              translationsSnapshot.data ??
+                              const <ChapterTranslation>[];
+                          ChapterTranslation? activeTranslation;
+                          if (_selectedLanguage != null) {
+                            for (final t in translations) {
+                              if (t.languageCode == _selectedLanguage) {
+                                activeTranslation = t;
+                                break;
+                              }
+                            }
+                          }
+                          return Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 680),
+                              child: ReaderZoomSurface(
+                                key: ValueKey(
+                                  'reader-continuous-zoom-${chapter.id}-${_selectedLanguage ?? 'original'}',
+                                ),
+                                resetGeneration: _zoomResetGeneration,
+                                onScrollLockChanged: _handleReaderZoomLock,
+                                onHighResolutionChanged: (enabled) =>
+                                    _handleHighResolutionChanged(
+                                      enabled,
+                                      chapter.images,
+                                    ),
+                                child: ListView.builder(
+                                  key: ValueKey(
+                                    '${chapter.id}-${_selectedLanguage ?? 'original'}',
+                                  ),
+                                  controller: _scrollController,
+                                  physics: _readerGestureLocked
+                                      ? const NeverScrollableScrollPhysics()
+                                      : null,
+                                  scrollCacheExtent:
+                                      const ScrollCacheExtent.viewport(1),
+                                  padding: const EdgeInsets.only(
+                                    top: 68,
+                                    bottom: 100,
+                                  ),
+                                  itemCount: chapter.images.length + 1,
+                                  itemBuilder: (context, index) {
+                                    if (index == chapter.images.length) {
+                                      return IgnorePointer(
+                                        ignoring: _readerGestureLocked,
+                                        child: AnimatedOpacity(
+                                          opacity: _readerGestureLocked ? 0 : 1,
+                                          duration: const Duration(
+                                            milliseconds: 120,
+                                          ),
+                                          child: _ReaderEnd(
+                                            hasPrevious: _currentIndex > 0,
+                                            hasNext:
+                                                _currentIndex <
+                                                widget.chapters.length - 1,
+                                            onPrevious: () =>
+                                                _openChapter(_currentIndex - 1),
+                                            onNext: () =>
+                                                _openChapter(_currentIndex + 1),
+                                            onBackToTop: _backToTop,
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                    final bubbles =
+                                        activeTranslation?.bubblesForPage(
+                                          index + 1,
+                                        ) ??
+                                        const <BubbleSelection>[];
+                                    final imageUrl = chapter.images[index];
+                                    _preloadFollowingPages(
+                                      chapter.images,
+                                      index,
+                                    );
+                                    return _BubbleOverlayImage(
+                                      key: ValueKey(imageUrl),
+                                      imageUrl: imageUrl,
+                                      bubbles: bubbles,
+                                      initialAspectRatio:
+                                          _pageAspectRatios[imageUrl],
+                                      useHighResolution:
+                                          _highResolutionPageIndexes.contains(
+                                            index,
+                                          ),
+                                      onAspectRatioResolved: (ratio) {
+                                        _pageAspectRatios[imageUrl] = ratio;
+                                      },
+                                      placeholderColor: tokens.surfaceSubtle,
+                                      errorLabel: context.tr(
+                                        'Cannot load page {page}',
+                                        values: {'page': index + 1},
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
                 ),
-              ),
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOut,
-                top: _showControls ? 0 : -100,
-                left: 0,
-                right: 0,
-                child: _ReaderTopBar(
-                  comicTitle:
-                  widget.comicTitle ?? context.tr('ComiVerse Reader'),
-                  chapter: _chapter,
-                  chapters: widget.chapters,
-                  currentIndex: _currentIndex,
-                  onBack: () => Navigator.pop(context),
-                  onChapterSelected: _openChapter,
-                  translationsFuture: _futureTranslations,
-                  selectedLanguage: _selectedLanguage,
-                  onLanguageSelected: _onLanguageSelected,
-                  onShowLanguageSheet: _showLanguageSheet,
+                Positioned.fill(
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 680),
+                      child: SizedBox.expand(
+                        child: IgnorePointer(
+                          child: ExcludeSemantics(
+                            child: RepaintBoundary(
+                              child: CustomPaint(
+                                key: const ValueKey(
+                                  'reader-copyright-watermark',
+                                ),
+                                painter: _ReaderCopyrightWatermarkPainter(
+                                  label: _watermarkLabel,
+                                ),
+                                isComplex: true,
+                                willChange: false,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOut,
-                bottom: _showControls ? 0 : -120,
-                left: 0,
-                right: 0,
-                child: _ReaderBottomBar(
-                  progress: _progress,
-                  hasPrevious: _currentIndex > 0,
-                  hasNext: _currentIndex < widget.chapters.length - 1,
-                  onPrevious: () => _openChapter(_currentIndex - 1),
-                  onNext: () => _openChapter(_currentIndex + 1),
-                  onBackToTop: _backToTop,
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: ValueListenableBuilder<bool>(
+                    valueListenable: _controlsVisibleNotifier,
+                    child: _ReaderTopBar(
+                      comicTitle:
+                          widget.comicTitle ?? context.tr('ComiVerse Reader'),
+                      chapter: _chapter,
+                      chapters: widget.chapters,
+                      currentIndex: _currentIndex,
+                      onBack: () => Navigator.pop(context),
+                      onChapterSelected: _openChapter,
+                      translationsFuture: _futureTranslations,
+                      selectedLanguage: _selectedLanguage,
+                      onLanguageSelected: _onLanguageSelected,
+                      onShowLanguageSheet: _showLanguageSheet,
+                      onFitToWidth: _resetReaderZoom,
+                    ),
+                    builder: (context, visible, child) => AnimatedSlide(
+                      offset: visible ? Offset.zero : const Offset(0, -1.2),
+                      duration: const Duration(milliseconds: 180),
+                      curve: Curves.easeOut,
+                      child: child,
+                    ),
+                  ),
                 ),
-              ),
-            ],
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: ValueListenableBuilder<bool>(
+                    valueListenable: _controlsVisibleNotifier,
+                    builder: (context, visible, _) => AnimatedSlide(
+                      offset: visible ? Offset.zero : const Offset(0, 1.2),
+                      duration: const Duration(milliseconds: 180),
+                      curve: Curves.easeOut,
+                      child: ValueListenableBuilder<double>(
+                        valueListenable: _progressNotifier,
+                        builder: (context, progress, _) => _ReaderBottomBar(
+                          progress: progress,
+                          hasPrevious: _currentIndex > 0,
+                          hasNext: _currentIndex < widget.chapters.length - 1,
+                          onPrevious: () => _openChapter(_currentIndex - 1),
+                          onNext: () => _openChapter(_currentIndex + 1),
+                          onBackToTop: _backToTop,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
+  }
+
+  String get _watermarkLabel {
+    final viewer = widget.viewerWatermark?.trim();
+    if (viewer == null || viewer.isEmpty) return '© ComiVerse';
+    return '© ComiVerse • $viewer';
   }
 }
 
@@ -292,6 +917,7 @@ class _ReaderTopBar extends StatelessWidget {
     required this.selectedLanguage,
     required this.onLanguageSelected,
     required this.onShowLanguageSheet,
+    required this.onFitToWidth,
   });
 
   final String comicTitle;
@@ -304,6 +930,7 @@ class _ReaderTopBar extends StatelessWidget {
   final String? selectedLanguage;
   final ValueChanged<String?> onLanguageSelected;
   final ValueChanged<List<ChapterTranslation>> onShowLanguageSheet;
+  final VoidCallback onFitToWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -367,7 +994,9 @@ class _ReaderTopBar extends StatelessWidget {
                 future: translationsFuture,
                 builder: (context, snapshot) {
                   final translations = snapshot.data ?? const [];
-                  final languages = translations.map((t) => t.languageCode).toList();
+                  final languages = translations
+                      .map((t) => t.languageCode)
+                      .toList();
                   final hasTranslations = languages.isNotEmpty;
 
                   return Row(
@@ -387,7 +1016,9 @@ class _ReaderTopBar extends StatelessWidget {
                             decoration: BoxDecoration(
                               color: selectedLanguage != null
                                   ? Theme.of(context).colorScheme.primary
-                                  : Theme.of(context).colorScheme.surfaceContainerHighest,
+                                  : Theme.of(
+                                      context,
+                                    ).colorScheme.surfaceContainerHighest,
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Row(
@@ -398,7 +1029,9 @@ class _ReaderTopBar extends StatelessWidget {
                                   size: 13,
                                   color: selectedLanguage != null
                                       ? Theme.of(context).colorScheme.onPrimary
-                                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                                      : Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
@@ -409,8 +1042,12 @@ class _ReaderTopBar extends StatelessWidget {
                                     fontSize: 11,
                                     fontWeight: FontWeight.w700,
                                     color: selectedLanguage != null
-                                        ? Theme.of(context).colorScheme.onPrimary
-                                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                                        ? Theme.of(
+                                            context,
+                                          ).colorScheme.onPrimary
+                                        : Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
                                   ),
                                 ),
                               ],
@@ -424,16 +1061,31 @@ class _ReaderTopBar extends StatelessWidget {
                         onSelected: (value) {
                           if (value == 'lang_picker') {
                             onShowLanguageSheet(translations);
+                          } else if (value == 'fit') {
+                            onFitToWidth();
                           }
                         },
                         itemBuilder: (_) => [
                           PopupMenuItem(
                             value: 'vertical',
-                            child: Text(context.tr('Vertical scroll')),
+                            enabled: false,
+                            child: Row(
+                              children: [
+                                const Icon(Icons.check_rounded, size: 18),
+                                const SizedBox(width: 8),
+                                Text(context.tr('Vertical scroll')),
+                              ],
+                            ),
                           ),
                           PopupMenuItem(
                             value: 'fit',
-                            child: Text(context.tr('Fit to width')),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.fit_screen_rounded, size: 18),
+                                const SizedBox(width: 8),
+                                Text(context.tr('Fit to width')),
+                              ],
+                            ),
                           ),
                           if (hasTranslations) ...[
                             const PopupMenuDivider(),
@@ -630,14 +1282,21 @@ class _ReaderEnd extends StatelessWidget {
 /// coordinates map 1:1 with no letterboxing.
 class _BubbleOverlayImage extends StatefulWidget {
   const _BubbleOverlayImage({
+    super.key,
     required this.imageUrl,
     required this.bubbles,
+    required this.initialAspectRatio,
+    required this.useHighResolution,
+    required this.onAspectRatioResolved,
     required this.placeholderColor,
     required this.errorLabel,
   });
 
   final String imageUrl;
   final List<BubbleSelection> bubbles;
+  final double? initialAspectRatio;
+  final bool useHighResolution;
+  final ValueChanged<double> onAspectRatioResolved;
   final Color placeholderColor;
   final String errorLabel;
 
@@ -648,45 +1307,115 @@ class _BubbleOverlayImage extends StatefulWidget {
 class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
   ImageStream? _stream;
   ImageStreamListener? _listener;
+  ImageProvider<Object>? _provider;
+  int? _cacheWidth;
+  int? _providerCacheWidth;
   double? _aspectRatio;
   bool _hasError = false;
+  bool _usingHighResolution = false;
 
   @override
   void initState() {
     super.initState();
-    _resolveImage();
+    _aspectRatio = widget.initialAspectRatio;
+    _usingHighResolution = widget.useHighResolution;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final cacheWidth = _readerImageCacheWidth(context);
+    if (_provider == null || cacheWidth != _cacheWidth) {
+      _cacheWidth = cacheWidth;
+      final targetWidth = _usingHighResolution
+          ? _readerZoomedImageCacheWidth(cacheWidth)
+          : cacheWidth;
+      _resolveImage(
+        CachedNetworkImageProvider(widget.imageUrl, maxWidth: targetWidth),
+        targetWidth,
+      );
+    }
   }
 
   @override
   void didUpdateWidget(covariant _BubbleOverlayImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.imageUrl != widget.imageUrl) {
-      _aspectRatio = null;
+      _aspectRatio = widget.initialAspectRatio;
       _hasError = false;
-      _resolveImage();
+      _usingHighResolution = widget.useHighResolution;
+      final cacheWidth = _cacheWidth;
+      final targetWidth = cacheWidth == null
+          ? null
+          : widget.useHighResolution
+          ? _readerZoomedImageCacheWidth(cacheWidth)
+          : cacheWidth;
+      _resolveImage(
+        CachedNetworkImageProvider(widget.imageUrl, maxWidth: targetWidth),
+        targetWidth,
+      );
+    } else if (oldWidget.useHighResolution != widget.useHighResolution) {
+      _switchImageResolution(widget.useHighResolution);
     }
   }
 
-  void _resolveImage() {
-    final provider = NetworkImage(widget.imageUrl);
+  void _switchImageResolution(bool useHighResolution) {
+    _usingHighResolution = useHighResolution;
+    final normalCacheWidth = _cacheWidth;
+    if (normalCacheWidth == null) return;
+    final targetWidth = useHighResolution
+        ? _readerZoomedImageCacheWidth(normalCacheWidth)
+        : normalCacheWidth;
+    if (_providerCacheWidth == targetWidth) return;
+
+    _resolveImage(
+      CachedNetworkImageProvider(widget.imageUrl, maxWidth: targetWidth),
+      targetWidth,
+    );
+  }
+
+  void _resolveImage(ImageProvider<Object> provider, int? providerCacheWidth) {
     final stream = provider.resolve(const ImageConfiguration());
     final listener = ImageStreamListener(
-          (info, _) {
-        if (!mounted) return;
+      (info, synchronousCall) {
+        if (!mounted || !identical(_provider, provider)) return;
         final w = info.image.width.toDouble();
         final h = info.image.height.toDouble();
         if (h > 0) {
-          setState(() => _aspectRatio = w / h);
+          final ratio = w / h;
+          widget.onAspectRatioResolved(ratio);
+          if (synchronousCall) {
+            _aspectRatio = ratio;
+          } else {
+            setState(() => _aspectRatio = ratio);
+          }
         }
       },
       onError: (error, stackTrace) {
-        if (!mounted) return;
+        if (!mounted || !identical(_provider, provider)) return;
+        final normalCacheWidth = _cacheWidth;
+        if (normalCacheWidth != null &&
+            providerCacheWidth != normalCacheWidth) {
+          setState(() {
+            _usingHighResolution = false;
+            _resolveImage(
+              CachedNetworkImageProvider(
+                widget.imageUrl,
+                maxWidth: normalCacheWidth,
+              ),
+              normalCacheWidth,
+            );
+          });
+          return;
+        }
         setState(() => _hasError = true);
       },
     );
     if (_stream != null && _listener != null) {
       _stream!.removeListener(_listener!);
     }
+    _provider = provider;
+    _providerCacheWidth = providerCacheWidth;
     _stream = stream;
     _listener = listener;
     stream.addListener(listener);
@@ -722,30 +1451,45 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
     }
     return AspectRatio(
       aspectRatio: _aspectRatio!,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.network(
-            widget.imageUrl,
-            fit: BoxFit.cover,
-            filterQuality: FilterQuality.medium,
-          ),
-          if (widget.bubbles.isNotEmpty)
-            LayoutBuilder(
-              builder: (context, constraints) {
-                return Stack(
-                  children: [
-                    for (final bubble in widget.bubbles)
-                      _buildBubble(
-                        bubble,
-                        constraints.maxWidth,
-                        constraints.maxHeight,
-                      ),
-                  ],
-                );
-              },
-            ),
-        ],
+      child: Semantics(
+        label: context.tr('Comic page. Pinch or double tap to zoom.'),
+        image: true,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ColoredBox(color: widget.placeholderColor),
+            if (_provider != null)
+              Image(
+                image: _provider!,
+                fit: BoxFit.cover,
+                filterQuality: widget.useHighResolution
+                    ? FilterQuality.medium
+                    : FilterQuality.low,
+                gaplessPlayback: true,
+                frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                  if (wasSynchronouslyLoaded || frame != null) {
+                    return child;
+                  }
+                  return const Center(child: CircularProgressIndicator());
+                },
+              ),
+            if (widget.bubbles.isNotEmpty)
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  return Stack(
+                    children: [
+                      for (final bubble in widget.bubbles)
+                        _buildBubble(
+                          bubble,
+                          constraints.maxWidth,
+                          constraints.maxHeight,
+                        ),
+                    ],
+                  );
+                },
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -788,7 +1532,13 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
       );
     }
 
-    return Positioned(left: left, top: top, width: w, height: h, child: content);
+    return Positioned(
+      left: left,
+      top: top,
+      width: w,
+      height: h,
+      child: content,
+    );
   }
 
   Color? _parseHexColor(String? hex) {
@@ -811,6 +1561,68 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
         return TextAlign.center;
     }
   }
+}
+
+int _readerImageCacheWidth(BuildContext context) {
+  final logicalWidth = MediaQuery.sizeOf(context).width.clamp(320.0, 680.0);
+  final physicalWidth = logicalWidth * MediaQuery.devicePixelRatioOf(context);
+  return physicalWidth.ceil().clamp(480, 2048);
+}
+
+int _readerZoomedImageCacheWidth(int normalCacheWidth) =>
+    (normalCacheWidth * 2).clamp(normalCacheWidth, 2048);
+
+ImageProvider<Object> _readerImageProvider(String url, BuildContext context) =>
+    CachedNetworkImageProvider(url, maxWidth: _readerImageCacheWidth(context));
+
+class _ReaderCopyrightWatermarkPainter extends CustomPainter {
+  const _ReaderCopyrightWatermarkPainter({required this.label});
+
+  final String label;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(
+          color: Colors.white.withValues(alpha: 0.17),
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.8,
+          shadows: [
+            Shadow(
+              color: Colors.black.withValues(alpha: 0.42),
+              offset: const Offset(1, 1),
+              blurRadius: 2,
+            ),
+          ],
+        ),
+      ),
+      maxLines: 1,
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    final overscan = math.max(size.width, size.height);
+    canvas
+      ..save()
+      ..translate(size.width / 2, size.height / 2)
+      ..rotate(-math.pi / 9)
+      ..translate(-size.width / 2, -size.height / 2);
+    var row = 0;
+    for (var y = -overscan; y < size.height + overscan; y += 150, row++) {
+      final rowOffset = row.isOdd ? 140.0 : 0.0;
+      for (var x = -overscan + rowOffset; x < size.width + overscan; x += 280) {
+        textPainter.paint(canvas, Offset(x, y));
+      }
+    }
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _ReaderCopyrightWatermarkPainter oldDelegate) =>
+      oldDelegate.label != label;
 }
 
 /// Clips a bubble's rectangular container down to its actual freeform
@@ -908,9 +1720,8 @@ class _LanguageBottomSheet extends StatelessWidget {
                     children: [
                       Text(
                         context.tr('Reading Language'),
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       Text(
                         context.tr(
@@ -1056,4 +1867,4 @@ class _LanguageOption extends StatelessWidget {
       ),
     );
   }
-}
+}

@@ -111,6 +111,8 @@ const Map<String, String> _vietnamese = {
   'Close': 'Đóng',
   'Comic': 'Truyện tranh',
   'ComiVerse Reader': 'Trình đọc ComiVerse',
+  'Comic page. Pinch or double tap to zoom.':
+      'Trang truyện. Chụm hai ngón hoặc chạm hai lần để thu phóng.',
   'Comments': 'Bình luận',
   'Comments are not available from the current backend API.':
       'API hiện tại chưa hỗ trợ bình luận.',

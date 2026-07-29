@@ -1,11 +1,11 @@
 {
-    "name": "comiverse_mobile",
-    "short_name": "comiverse_mobile",
+    "name": "ComiVerse",
+    "short_name": "ComiVerse",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Read and discover comics with ComiVerse.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

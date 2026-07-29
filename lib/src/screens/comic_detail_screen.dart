@@ -17,11 +17,13 @@ class ComicDetailScreen extends StatefulWidget {
     required this.apiClient,
     required this.comic,
     this.preferences,
+    this.viewerWatermark,
   });
 
   final ApiClient apiClient;
   final Comic comic;
   final AppPreferences? preferences;
+  final String? viewerWatermark;
 
   @override
   State<ComicDetailScreen> createState() => _ComicDetailScreenState();
@@ -130,9 +132,9 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
   }
 
   void _showMessage(
-      String message, {
-        InAppNotificationType type = InAppNotificationType.error,
-      }) {
+    String message, {
+    InAppNotificationType type = InAppNotificationType.error,
+  }) {
     if (!mounted) return;
     InAppNotifications.show(
       context,
@@ -161,24 +163,25 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
   void _openReader(List<ChapterLite> chapters, int index) {
     Navigator.of(context)
         .push(
-      MaterialPageRoute(
-        builder: (_) => ReaderScreen(
-          apiClient: widget.apiClient,
-          chapters: chapters,
-          initialIndex: index,
-          comicTitle: widget.comic.title,
-          initialLanguage: _selectedLanguage,
-          preferences: widget.preferences,
-        ),
-      ),
-    )
+          MaterialPageRoute(
+            builder: (_) => ReaderScreen(
+              apiClient: widget.apiClient,
+              chapters: chapters,
+              initialIndex: index,
+              comicTitle: widget.comic.title,
+              initialLanguage: _selectedLanguage,
+              preferences: widget.preferences,
+              viewerWatermark: widget.viewerWatermark,
+            ),
+          ),
+        )
         .then((_) {
-      if (widget.apiClient.hasToken && mounted) {
-        setState(() => _future = _load());
-      }
-      // Sync lại ngôn ngữ nếu user đổi trong reader
-      _restoreReadingLanguage();
-    });
+          if (widget.apiClient.hasToken && mounted) {
+            setState(() => _future = _load());
+          }
+          // Sync lại ngôn ngữ nếu user đổi trong reader
+          _restoreReadingLanguage();
+        });
   }
 
   @override
@@ -273,7 +276,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                                   'By {author}',
                                   values: {
                                     'author':
-                                    comic.authorName ??
+                                        comic.authorName ??
                                         context.tr('Unknown author'),
                                   },
                                 ),
@@ -369,8 +372,8 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                             comic.summary?.trim().isNotEmpty == true
                                 ? comic.summary!
                                 : context.tr(
-                              'No synopsis has been published yet.',
-                            ),
+                                    'No synopsis has been published yet.',
+                                  ),
                             maxLines: _showFullSummary ? null : 3,
                             overflow: _showFullSummary
                                 ? TextOverflow.visible
@@ -381,7 +384,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                           if ((comic.summary?.length ?? 0) > 140)
                             TextButton(
                               onPressed: () => setState(
-                                    () => _showFullSummary = !_showFullSummary,
+                                () => _showFullSummary = !_showFullSummary,
                               ),
                               child: Text(
                                 context.tr(
@@ -445,53 +448,53 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                   ),
                 )
               else if (_tab == 1)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: EmptyState(
-                      icon: Icons.chat_bubble_outline_rounded,
-                      message: context.tr(
-                        'Comments are not available from the current backend API.',
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: EmptyState(
+                    icon: Icons.chat_bubble_outline_rounded,
+                    message: context.tr(
+                      'Comments are not available from the current backend API.',
+                    ),
+                  ),
+                )
+              else if (chapters.isEmpty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: EmptyState(
+                    icon: Icons.menu_book_outlined,
+                    message: context.tr('No published chapters yet.'),
+                  ),
+                )
+              else ...[
+                if ((data?.languages ?? const []).isNotEmpty)
+                  SliverToBoxAdapter(
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 720),
+                        child: _TranslationChipRow(
+                          languages: data!.languages,
+                          selected: _selectedLanguage,
+                          onChanged: _onLanguageChanged,
+                        ),
                       ),
                     ),
-                  )
-                else if (chapters.isEmpty)
-                    SliverFillRemaining(
-                      hasScrollBody: false,
-                      child: EmptyState(
-                        icon: Icons.menu_book_outlined,
-                        message: context.tr('No published chapters yet.'),
-                      ),
-                    )
-                  else ...[
-                      if ((data?.languages ?? const []).isNotEmpty)
-                        SliverToBoxAdapter(
-                          child: Center(
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 720),
-                              child: _TranslationChipRow(
-                                languages: data!.languages,
-                                selected: _selectedLanguage,
-                                onChanged: _onLanguageChanged,
-                              ),
-                            ),
-                          ),
-                        ),
-                      SliverPadding(
-                        padding: const EdgeInsets.fromLTRB(20, 14, 20, 30),
-                        sliver: SliverList.separated(
-                          itemCount: chapters.length,
-                          separatorBuilder: (_, _) => const SizedBox(height: 8),
-                          itemBuilder: (context, index) {
-                            final chapter = chapters[index];
-                            return _ChapterRow(
-                              chapter: chapter,
-                              isRead: data!.readChapterIds.contains(chapter.id),
-                              onTap: () => _openReader(chapters, index),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
+                  ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 30),
+                  sliver: SliverList.separated(
+                    itemCount: chapters.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final chapter = chapters[index];
+                      return _ChapterRow(
+                        chapter: chapter,
+                        isRead: data!.readChapterIds.contains(chapter.id),
+                        onTap: () => _openReader(chapters, index),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ],
           );
         },
@@ -629,7 +632,7 @@ class _ChapterRow extends StatelessWidget {
         ),
         subtitle: Text(
           '${_formatDate(context, chapter.createdAt)}'
-              '${chapter.viewCount == null ? '' : context.tr(' · {count} views', values: {'count': compactNumber(chapter.viewCount!)})}',
+          '${chapter.viewCount == null ? '' : context.tr(' · {count} views', values: {'count': compactNumber(chapter.viewCount!)})}',
         ),
         trailing: isRead
             ? Icon(Icons.check_circle_rounded, color: scheme.primary)
@@ -712,11 +715,7 @@ class _TranslationChipRow extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(
-                Icons.translate_rounded,
-                size: 16,
-                color: scheme.primary,
-              ),
+              Icon(Icons.translate_rounded, size: 16, color: scheme.primary),
               const SizedBox(width: 6),
               Text(
                 context.tr('Available Translations'),
@@ -853,8 +852,7 @@ class _LangChip extends StatelessWidget {
                   label,
                   style: TextStyle(
                     fontSize: 13,
-                    fontWeight:
-                        isSelected ? FontWeight.w700 : FontWeight.w500,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                     color: isSelected
                         ? scheme.onPrimary
                         : scheme.onSurfaceVariant,

@@ -187,11 +187,14 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         widget.apiClient.getComicDetail(comicId),
       );
       if (!mounted) return;
-      await _push(ComicDetailScreen(
-        apiClient: widget.apiClient,
-        comic: comic,
-        preferences: widget.preferences,
-      ));
+      await _push(
+        ComicDetailScreen(
+          apiClient: widget.apiClient,
+          comic: comic,
+          preferences: widget.preferences,
+          viewerWatermark: widget.user?.username,
+        ),
+      );
     } catch (error) {
       if (!mounted) return;
       _showMessage(context.localizedError(error));
@@ -219,6 +222,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           chapters: chapters,
           initialIndex: index,
           comicTitle: comic.title,
+          viewerWatermark: widget.user?.username,
         ),
       );
     } catch (error) {
