@@ -31,10 +31,49 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('posts forum comments and replies through the real contract', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 760));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final apiClient = _ForumApiClient(authenticated: true);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: ForumThreadScreen(apiClient: apiClient, threadId: 'thread-1'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, 'A new comment');
+    await tester.tap(find.byTooltip('Post comment'));
+    await tester.pumpAndSettle();
+    expect(apiClient.created.single, ('A new comment', null));
+
+    await tester.tap(find.text('Reply').first);
+    await tester.pump();
+    await tester.enterText(find.byType(TextField).last, 'A nested reply');
+    final postReplyButton = find.byTooltip('Post reply');
+    await tester.ensureVisible(postReplyButton);
+    await tester.pumpAndSettle();
+    await tester.tap(postReplyButton);
+    await tester.pumpAndSettle();
+    expect(apiClient.created.last, ('A nested reply', 'comment-1'));
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _ForumApiClient extends ApiClient {
-  _ForumApiClient() : super(baseUrl: 'http://localhost/api');
+  _ForumApiClient({this.authenticated = false})
+    : super(baseUrl: 'http://localhost/api');
+
+  final bool authenticated;
+  final List<(String, String?)> created = [];
+
+  @override
+  bool get hasToken => authenticated;
 
   @override
   Future<ForumThread> getForumThread(String threadId) async {
@@ -73,5 +112,23 @@ class _ForumApiClient extends ApiClient {
         createdAt: DateTime.now(),
       ),
     ];
+  }
+
+  @override
+  Future<ForumComment> createForumComment({
+    required String threadId,
+    required String content,
+    String? parentId,
+  }) async {
+    created.add((content, parentId));
+    return ForumComment(
+      id: 'created-${created.length}',
+      userId: 'current-user',
+      author: 'Current Reader',
+      content: content,
+      parentId: parentId,
+      avatarUrl: null,
+      createdAt: DateTime.now(),
+    );
   }
 }

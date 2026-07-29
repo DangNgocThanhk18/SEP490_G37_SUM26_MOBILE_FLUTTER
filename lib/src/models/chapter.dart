@@ -57,9 +57,9 @@ class ChapterDetail {
     final rawImages = json['images'];
     final images = rawImages is List
         ? rawImages
-        .map((item) => item.toString())
-        .where((url) => url.trim().isNotEmpty)
-        .toList()
+              .map((item) => item.toString())
+              .where((url) => url.trim().isNotEmpty)
+              .toList()
         : <String>[];
 
     return ChapterDetail(
@@ -169,9 +169,9 @@ class BubbleSelection {
     final rawPoints = json['points'];
     final points = rawPoints is List
         ? rawPoints
-        .whereType<Map<String, dynamic>>()
-        .map(BubblePoint.fromJson)
-        .toList()
+              .whereType<Map<String, dynamic>>()
+              .map(BubblePoint.fromJson)
+              .toList()
         : <BubblePoint>[];
     return BubbleSelection(
       id: (json['id'] ?? '').toString(),

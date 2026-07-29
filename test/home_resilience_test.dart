@@ -17,8 +17,6 @@ void main() {
           apiClient: _PartiallyFailingApiClient(),
           user: null,
           onOpenExplore: () {},
-          onToggleTheme: () {},
-          isDarkMode: false,
         ),
       ),
     );
@@ -27,6 +25,8 @@ void main() {
     expect(find.text('Some sections could not be loaded.'), findsOneWidget);
     expect(find.text('Recommended for You'), findsOneWidget);
     expect(find.text('Fallback recommendation'), findsWidgets);
+    expect(find.byIcon(Icons.dark_mode_outlined), findsNothing);
+    expect(find.byIcon(Icons.light_mode_outlined), findsNothing);
 
     await tester.drag(
       find.byKey(const PageStorageKey('home-scroll')),

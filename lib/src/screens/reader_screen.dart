@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
@@ -9,11 +9,15 @@ import 'package:flutter/services.dart';
 
 import '../l10n/app_localizations.dart';
 import '../models/chapter.dart';
+import '../models/content_comment.dart';
 import '../services/api_client.dart';
 import '../services/app_preferences.dart';
 import '../services/screen_capture_protection.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/content_comment_section.dart';
+import '../widgets/in_app_notification.dart';
+import 'premium_screen.dart';
 
 abstract final class ReaderImageLoadingPolicy {
   static const int preloadAheadCount = 4;
@@ -33,6 +37,32 @@ abstract final class ReaderImageLoadingPolicy {
     return result;
   }
 }
+
+@visibleForTesting
+String? maskReaderWatermarkIdentifier(String? identifier) {
+  final value = identifier?.trim();
+  if (value == null || value.isEmpty) return null;
+
+  final atIndex = value.lastIndexOf('@');
+  if (atIndex > 0 && atIndex < value.length - 1) {
+    final localPart = value.substring(0, atIndex);
+    final domain = value.substring(atIndex + 1);
+    return '${_maskReaderIdentityPart(localPart)}@$domain';
+  }
+  return _maskReaderIdentityPart(value);
+}
+
+String _maskReaderIdentityPart(String value) {
+  final visibleLength = value.length >= 3 ? 3 : 1;
+  return '${value.substring(0, visibleLength)}***';
+}
+
+@visibleForTesting
+bool shouldShowReaderWatermark({required TargetPlatform platform}) =>
+    platform == TargetPlatform.iOS;
+
+bool get _shouldShowReaderWatermark =>
+    shouldShowReaderWatermark(platform: defaultTargetPlatform);
 
 abstract final class ReaderZoomPolicy {
   static const double minScale = 1;
@@ -399,7 +429,7 @@ class ReaderScreen extends StatefulWidget {
     this.comicTitle,
     this.initialLanguage,
     this.preferences,
-    this.viewerWatermark,
+    this.viewerIdentifier,
   });
 
   final ApiClient apiClient;
@@ -408,7 +438,7 @@ class ReaderScreen extends StatefulWidget {
   final String? comicTitle;
   final String? initialLanguage;
   final AppPreferences? preferences;
-  final String? viewerWatermark;
+  final String? viewerIdentifier;
 
   @override
   State<ReaderScreen> createState() => _ReaderScreenState();
@@ -641,6 +671,110 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
+  void _showChapterComments() {
+    _controlsVisibleNotifier.value = true;
+    showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.86,
+        minChildSize: 0.5,
+        maxChildSize: 0.96,
+        builder: (context, scrollController) => Material(
+          color: context.cvColors.surfaceRaised,
+          clipBehavior: Clip.antiAlias,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 42,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 10, 8, 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        context.tr(
+                          'Chapter {number} discussion',
+                          values: {'number': _chapter.chapterNumber},
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: context.tr('Close'),
+                      onPressed: () => Navigator.pop(sheetContext),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: scrollController,
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    18,
+                    16,
+                    24 + MediaQuery.viewInsetsOf(context).bottom,
+                  ),
+                  child: ContentCommentSection(
+                    apiClient: widget.apiClient,
+                    target: ContentCommentTarget.chapter,
+                    targetId: _chapter.id,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openPremium() async {
+    final user = widget.apiClient.currentUser;
+    if (user == null) {
+      InAppNotifications.show(
+        context,
+        type: InAppNotificationType.information,
+        title: context.tr('Information'),
+        message: context.tr('Sign in to upgrade and unlock Premium chapters.'),
+      );
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PremiumScreen(apiClient: widget.apiClient, user: user),
+      ),
+    );
+    if (!mounted) return;
+    try {
+      await widget.apiClient.getMe();
+      if (mounted) {
+        setState(() {
+          _futureChapter = widget.apiClient.getChapterDetail(_chapter.id);
+        });
+      }
+    } catch (_) {
+      // Returning to the Reader must remain possible if profile refresh fails.
+    }
+  }
+
   Future<void> _backToTop() async {
     if (!_scrollController.hasClients) return;
     if (_readerGestureLocked) {
@@ -700,6 +834,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
                       }
                       final chapter = snapshot.data;
                       if (chapter == null || chapter.images.isEmpty) {
+                        final isPremiumLocked =
+                            _chapter.isPremium &&
+                            !(widget.apiClient.currentUser?.premiumActive ??
+                                false);
+                        if (isPremiumLocked) {
+                          return _PremiumChapterGate(
+                            onUpgrade: _openPremium,
+                            signedIn: widget.apiClient.hasToken,
+                          );
+                        }
                         return EmptyState(
                           icon: Icons.broken_image_outlined,
                           message: context.tr(
@@ -770,6 +914,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                                             onNext: () =>
                                                 _openChapter(_currentIndex + 1),
                                             onBackToTop: _backToTop,
+                                            onComments: _showChapterComments,
                                           ),
                                         ),
                                       );
@@ -813,31 +958,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     },
                   ),
                 ),
-                Positioned.fill(
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 680),
-                      child: SizedBox.expand(
-                        child: IgnorePointer(
-                          child: ExcludeSemantics(
-                            child: RepaintBoundary(
-                              child: CustomPaint(
-                                key: const ValueKey(
-                                  'reader-copyright-watermark',
-                                ),
-                                painter: _ReaderCopyrightWatermarkPainter(
-                                  label: _watermarkLabel,
-                                ),
-                                isComplex: true,
-                                willChange: false,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
+                if (_shouldShowReaderWatermark)
+                  Positioned.fill(
+                    child: _ReaderCopyrightWatermark(
+                      identifier: widget.viewerIdentifier,
                     ),
                   ),
-                ),
                 Positioned(
                   top: 0,
                   left: 0,
@@ -885,6 +1011,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                           onPrevious: () => _openChapter(_currentIndex - 1),
                           onNext: () => _openChapter(_currentIndex + 1),
                           onBackToTop: _backToTop,
+                          onComments: _showChapterComments,
                         ),
                       ),
                     ),
@@ -897,11 +1024,157 @@ class _ReaderScreenState extends State<ReaderScreen> {
       ),
     );
   }
+}
 
-  String get _watermarkLabel {
-    final viewer = widget.viewerWatermark?.trim();
-    if (viewer == null || viewer.isEmpty) return '© ComiVerse';
-    return '© ComiVerse • $viewer';
+class _PremiumChapterGate extends StatelessWidget {
+  const _PremiumChapterGate({required this.onUpgrade, required this.signedIn});
+
+  final VoidCallback onUpgrade;
+  final bool signedIn;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 92, 20, 116),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  scheme.primaryContainer,
+                  context.cvColors.surfaceRaised,
+                ],
+              ),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: scheme.primary.withValues(alpha: 0.32)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                children: [
+                  Container(
+                    width: 68,
+                    height: 68,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: scheme.primary.withValues(alpha: 0.14),
+                    ),
+                    child: Icon(
+                      Icons.workspace_premium_rounded,
+                      size: 36,
+                      color: scheme.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    context.tr('Premium chapter'),
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    context.tr(
+                      'Upgrade your plan to unlock this chapter and continue reading.',
+                    ),
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: onUpgrade,
+                      icon: Icon(
+                        signedIn
+                            ? Icons.workspace_premium_rounded
+                            : Icons.login_rounded,
+                      ),
+                      label: Text(
+                        context.tr(signedIn ? 'View Premium plans' : 'Sign in'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReaderCopyrightWatermark extends StatelessWidget {
+  const _ReaderCopyrightWatermark({required this.identifier});
+
+  final String? identifier;
+
+  @override
+  Widget build(BuildContext context) {
+    final maskedIdentifier = maskReaderWatermarkIdentifier(identifier);
+    final label = maskedIdentifier == null
+        ? '© ComiVerse'
+        : '© ComiVerse • $maskedIdentifier';
+    const alignments = <Alignment>[
+      Alignment(-0.94, -0.68),
+      Alignment(0.94, 0),
+      Alignment(-0.94, 0.68),
+    ];
+
+    return IgnorePointer(
+      key: const ValueKey('reader-copyright-watermark'),
+      child: ExcludeSemantics(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 680),
+            child: RepaintBoundary(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    for (final alignment in alignments)
+                      Align(
+                        alignment: alignment,
+                        child: Transform.rotate(
+                          angle: -0.08,
+                          child: Text(
+                            label,
+                            maxLines: 1,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.05),
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 0.35,
+                              shadows: [
+                                Shadow(
+                                  color: Colors.black.withValues(alpha: 0.04),
+                                  offset: const Offset(0.5, 0.5),
+                                  blurRadius: 1,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -1136,6 +1409,7 @@ class _ReaderBottomBar extends StatelessWidget {
     required this.onPrevious,
     required this.onNext,
     required this.onBackToTop,
+    required this.onComments,
   });
 
   final double progress;
@@ -1144,6 +1418,7 @@ class _ReaderBottomBar extends StatelessWidget {
   final VoidCallback onPrevious;
   final VoidCallback onNext;
   final VoidCallback onBackToTop;
+  final VoidCallback onComments;
 
   @override
   Widget build(BuildContext context) {
@@ -1165,10 +1440,15 @@ class _ReaderBottomBar extends StatelessWidget {
                     label: context.tr('Previous'),
                     onTap: hasPrevious ? onPrevious : null,
                   ),
-                  IconButton.filledTonal(
-                    tooltip: context.tr('Back to top'),
-                    onPressed: onBackToTop,
-                    icon: const Icon(Icons.vertical_align_top_rounded),
+                  _ReaderControl(
+                    icon: Icons.forum_outlined,
+                    label: context.tr('Comments'),
+                    onTap: onComments,
+                  ),
+                  _ReaderControl(
+                    icon: Icons.vertical_align_top_rounded,
+                    label: context.tr('Top'),
+                    onTap: onBackToTop,
                   ),
                   _ReaderControl(
                     icon: Icons.skip_next_rounded,
@@ -1208,7 +1488,13 @@ class _ReaderControl extends StatelessWidget {
               color: onTap == null ? Theme.of(context).disabledColor : null,
             ),
             const SizedBox(height: 3),
-            Text(label, style: Theme.of(context).textTheme.bodySmall),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
           ],
         ),
       ),
@@ -1223,6 +1509,7 @@ class _ReaderEnd extends StatelessWidget {
     required this.onPrevious,
     required this.onNext,
     required this.onBackToTop,
+    required this.onComments,
   });
 
   final bool hasPrevious;
@@ -1230,6 +1517,7 @@ class _ReaderEnd extends StatelessWidget {
   final VoidCallback onPrevious;
   final VoidCallback onNext;
   final VoidCallback onBackToTop;
+  final VoidCallback onComments;
 
   @override
   Widget build(BuildContext context) {
@@ -1244,6 +1532,15 @@ class _ReaderEnd extends StatelessWidget {
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.tonalIcon(
+                onPressed: onComments,
+                icon: const Icon(Icons.forum_outlined),
+                label: Text(context.tr('Join the chapter discussion')),
+              ),
+            ),
+            const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
@@ -1574,56 +1871,6 @@ int _readerZoomedImageCacheWidth(int normalCacheWidth) =>
 
 ImageProvider<Object> _readerImageProvider(String url, BuildContext context) =>
     CachedNetworkImageProvider(url, maxWidth: _readerImageCacheWidth(context));
-
-class _ReaderCopyrightWatermarkPainter extends CustomPainter {
-  const _ReaderCopyrightWatermarkPainter({required this.label});
-
-  final String label;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (size.isEmpty) return;
-    final textPainter = TextPainter(
-      text: TextSpan(
-        text: label,
-        style: TextStyle(
-          color: Colors.white.withValues(alpha: 0.17),
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.8,
-          shadows: [
-            Shadow(
-              color: Colors.black.withValues(alpha: 0.42),
-              offset: const Offset(1, 1),
-              blurRadius: 2,
-            ),
-          ],
-        ),
-      ),
-      maxLines: 1,
-      textDirection: TextDirection.ltr,
-    )..layout();
-
-    final overscan = math.max(size.width, size.height);
-    canvas
-      ..save()
-      ..translate(size.width / 2, size.height / 2)
-      ..rotate(-math.pi / 9)
-      ..translate(-size.width / 2, -size.height / 2);
-    var row = 0;
-    for (var y = -overscan; y < size.height + overscan; y += 150, row++) {
-      final rowOffset = row.isOdd ? 140.0 : 0.0;
-      for (var x = -overscan + rowOffset; x < size.width + overscan; x += 280) {
-        textPainter.paint(canvas, Offset(x, y));
-      }
-    }
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant _ReaderCopyrightWatermarkPainter oldDelegate) =>
-      oldDelegate.label != label;
-}
 
 /// Clips a bubble's rectangular container down to its actual freeform
 /// polygon outline, using the bubble's own points relative to its

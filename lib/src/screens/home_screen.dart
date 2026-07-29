@@ -15,15 +15,11 @@ class HomeScreen extends StatefulWidget {
     required this.apiClient,
     required this.user,
     required this.onOpenExplore,
-    required this.onToggleTheme,
-    required this.isDarkMode,
   });
 
   final ApiClient apiClient;
   final UserProfile? user;
   final VoidCallback onOpenExplore;
-  final VoidCallback onToggleTheme;
-  final bool isDarkMode;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -132,17 +128,6 @@ class _HomeScreenState extends State<HomeScreen>
             tooltip: context.tr('Explore comics'),
             onPressed: widget.onOpenExplore,
             icon: const Icon(Icons.search_rounded),
-          ),
-          IconButton(
-            tooltip: context.tr(
-              widget.isDarkMode ? 'Use light mode' : 'Use dark mode',
-            ),
-            onPressed: widget.onToggleTheme,
-            icon: Icon(
-              widget.isDarkMode
-                  ? Icons.light_mode_outlined
-                  : Icons.dark_mode_outlined,
-            ),
           ),
           Padding(
             padding: const EdgeInsets.only(right: 12),

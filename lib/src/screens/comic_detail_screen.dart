@@ -4,10 +4,12 @@ import 'package:flutter/services.dart';
 import '../l10n/app_localizations.dart';
 import '../models/chapter.dart';
 import '../models/comic.dart';
+import '../models/content_comment.dart';
 import '../services/api_client.dart';
 import '../services/app_preferences.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/content_comment_section.dart';
 import '../widgets/in_app_notification.dart';
 import 'reader_screen.dart';
 
@@ -17,13 +19,13 @@ class ComicDetailScreen extends StatefulWidget {
     required this.apiClient,
     required this.comic,
     this.preferences,
-    this.viewerWatermark,
+    this.viewerIdentifier,
   });
 
   final ApiClient apiClient;
   final Comic comic;
   final AppPreferences? preferences;
-  final String? viewerWatermark;
+  final String? viewerIdentifier;
 
   @override
   State<ComicDetailScreen> createState() => _ComicDetailScreenState();
@@ -171,7 +173,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
               comicTitle: widget.comic.title,
               initialLanguage: _selectedLanguage,
               preferences: widget.preferences,
-              viewerWatermark: widget.viewerWatermark,
+              viewerIdentifier: widget.viewerIdentifier,
             ),
           ),
         )
@@ -448,12 +450,18 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                   ),
                 )
               else if (_tab == 1)
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: EmptyState(
-                    icon: Icons.chat_bubble_outline_rounded,
-                    message: context.tr(
-                      'Comments are not available from the current backend API.',
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 36),
+                  sliver: SliverToBoxAdapter(
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 720),
+                        child: ContentCommentSection(
+                          apiClient: widget.apiClient,
+                          target: ContentCommentTarget.comic,
+                          targetId: widget.comic.id,
+                        ),
+                      ),
                     ),
                   ),
                 )

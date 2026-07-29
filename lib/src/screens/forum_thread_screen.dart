@@ -27,11 +27,16 @@ class ForumThreadScreen extends StatefulWidget {
 
 class _ForumThreadScreenState extends State<ForumThreadScreen> {
   final ScrollController _scrollController = ScrollController();
+  final TextEditingController _commentController = TextEditingController();
+  final TextEditingController _replyController = TextEditingController();
+  final FocusNode _replyFocusNode = FocusNode();
   final Map<String, GlobalKey> _commentKeys = {};
   late Future<_ForumThreadData> _future = _load();
   Timer? _highlightTimer;
   bool _scrollScheduled = false;
   bool _showHighlight = true;
+  bool _submitting = false;
+  ForumComment? _replyingTo;
 
   Future<_ForumThreadData> _load() async {
     final values = await Future.wait([
@@ -47,6 +52,9 @@ class _ForumThreadScreenState extends State<ForumThreadScreen> {
   @override
   void dispose() {
     _highlightTimer?.cancel();
+    _commentController.dispose();
+    _replyController.dispose();
+    _replyFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -57,6 +65,77 @@ class _ForumThreadScreenState extends State<ForumThreadScreen> {
       _showHighlight = true;
       _future = _load();
     });
+  }
+
+  void _startReply(ForumComment comment) {
+    if (!widget.apiClient.hasToken) {
+      InAppNotifications.information(
+        context,
+        title: context.tr('Information'),
+        message: context.tr('Sign in to join the discussion.'),
+      );
+      return;
+    }
+    setState(() {
+      _replyingTo = comment;
+      _replyController.clear();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _replyFocusNode.requestFocus();
+    });
+  }
+
+  void _cancelReply() {
+    setState(() {
+      _replyingTo = null;
+      _replyController.clear();
+    });
+  }
+
+  Future<void> _submitComment({ForumComment? parent}) async {
+    final controller = parent == null ? _commentController : _replyController;
+    final content = controller.text.trim();
+    if (_submitting || content.isEmpty) return;
+    if (!widget.apiClient.hasToken) {
+      InAppNotifications.information(
+        context,
+        title: context.tr('Information'),
+        message: context.tr('Sign in to join the discussion.'),
+      );
+      return;
+    }
+    setState(() => _submitting = true);
+    try {
+      await widget.apiClient.createForumComment(
+        threadId: widget.threadId,
+        content: content,
+        parentId: parent?.id,
+      );
+      if (!mounted) return;
+      controller.clear();
+      setState(() {
+        _replyingTo = null;
+        _scrollScheduled = false;
+        _showHighlight = false;
+        _future = _load();
+      });
+      InAppNotifications.success(
+        context,
+        title: context.tr('Success'),
+        message: context.tr(
+          parent == null ? 'Comment posted.' : 'Reply posted.',
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      InAppNotifications.error(
+        context,
+        title: context.tr('Error'),
+        message: context.localizedError(error),
+      );
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
 
   void _scheduleTargetScroll(List<_ThreadedForumComment> comments) {
@@ -120,6 +199,18 @@ class _ForumThreadScreenState extends State<ForumThreadScreen> {
                   ),
                 ),
                 SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  sliver: SliverToBoxAdapter(
+                    child: _ForumCommentComposer(
+                      controller: _commentController,
+                      submitting: _submitting,
+                      signedIn: widget.apiClient.hasToken,
+                      locked: data.thread.isLocked,
+                      onSubmit: () => _submitComment(),
+                    ),
+                  ),
+                ),
+                SliverPadding(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                   sliver: SliverToBoxAdapter(
                     child: Row(
@@ -169,10 +260,30 @@ class _ForumThreadScreenState extends State<ForumThreadScreen> {
                           padding: EdgeInsets.only(
                             left: (item.depth * 18).clamp(0, 54).toDouble(),
                           ),
-                          child: _CommentCard(
-                            comment: item.comment,
-                            isReply: item.depth > 0,
-                            isHighlighted: isTarget,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _CommentCard(
+                                comment: item.comment,
+                                isReply: item.depth > 0,
+                                isHighlighted: isTarget,
+                                onReply:
+                                    widget.apiClient.hasToken &&
+                                        !data.thread.isLocked
+                                    ? () => _startReply(item.comment)
+                                    : null,
+                              ),
+                              if (_replyingTo?.id == item.comment.id)
+                                _ForumInlineReplyComposer(
+                                  controller: _replyController,
+                                  focusNode: _replyFocusNode,
+                                  replyingTo: item.comment.author,
+                                  submitting: _submitting,
+                                  onCancel: _cancelReply,
+                                  onSubmit: () =>
+                                      _submitComment(parent: item.comment),
+                                ),
+                            ],
                           ),
                         );
                       },
@@ -299,11 +410,13 @@ class _CommentCard extends StatelessWidget {
     required this.comment,
     required this.isReply,
     required this.isHighlighted,
+    this.onReply,
   });
 
   final ForumComment comment;
   final bool isReply;
   final bool isHighlighted;
+  final VoidCallback? onReply;
 
   @override
   Widget build(BuildContext context) {
@@ -353,6 +466,151 @@ class _CommentCard extends StatelessWidget {
             style: Theme.of(
               context,
             ).textTheme.bodyMedium?.copyWith(height: 1.5),
+          ),
+          if (onReply != null) ...[
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: onReply,
+                icon: const Icon(Icons.reply_rounded, size: 17),
+                label: Text(context.tr('Reply')),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ForumCommentComposer extends StatelessWidget {
+  const _ForumCommentComposer({
+    required this.controller,
+    required this.submitting,
+    required this.signedIn,
+    required this.locked,
+    required this.onSubmit,
+  });
+
+  final TextEditingController controller;
+  final bool submitting;
+  final bool signedIn;
+  final bool locked;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    if (locked || !signedIn) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              locked ? Icons.lock_outline_rounded : Icons.login_rounded,
+              color: scheme.primary,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                context.tr(
+                  locked
+                      ? 'This discussion is locked.'
+                      : 'Sign in to join the discussion.',
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return TextField(
+      controller: controller,
+      minLines: 2,
+      maxLines: 4,
+      maxLength: 5000,
+      textCapitalization: TextCapitalization.sentences,
+      decoration: InputDecoration(
+        hintText: context.tr('Write a comment…'),
+        suffixIcon: Padding(
+          padding: const EdgeInsets.all(8),
+          child: IconButton.filled(
+            tooltip: context.tr('Post comment'),
+            onPressed: submitting ? null : onSubmit,
+            icon: submitting
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.send_rounded),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ForumInlineReplyComposer extends StatelessWidget {
+  const _ForumInlineReplyComposer({
+    required this.controller,
+    required this.focusNode,
+    required this.replyingTo,
+    required this.submitting,
+    required this.onCancel,
+    required this.onSubmit,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final String replyingTo;
+  final bool submitting;
+  final VoidCallback onCancel;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 0, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  context.tr(
+                    'Replying to {name}',
+                    values: {'name': replyingTo},
+                  ),
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
+              ),
+              TextButton(
+                onPressed: onCancel,
+                child: Text(context.tr('Cancel')),
+              ),
+            ],
+          ),
+          TextField(
+            controller: controller,
+            focusNode: focusNode,
+            minLines: 1,
+            maxLines: 3,
+            maxLength: 5000,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: InputDecoration(
+              hintText: context.tr('Write a reply…'),
+              suffixIcon: IconButton(
+                tooltip: context.tr('Post reply'),
+                onPressed: submitting ? null : onSubmit,
+                icon: const Icon(Icons.send_rounded),
+              ),
+            ),
           ),
         ],
       ),

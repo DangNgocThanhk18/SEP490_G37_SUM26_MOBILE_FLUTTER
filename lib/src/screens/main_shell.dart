@@ -13,6 +13,7 @@ import '../services/app_preferences.dart';
 import '../widgets/in_app_notification.dart';
 import 'comic_detail_screen.dart';
 import 'explore_screen.dart';
+import 'forum_screen.dart';
 import 'forum_thread_screen.dart';
 import 'home_screen.dart';
 import 'library_screen.dart';
@@ -55,9 +56,17 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _index = 0;
+  final Set<int> _visitedTabs = {0};
   int _unreadCount = 0;
   int _notificationRefreshSignal = 0;
   Timer? _notificationTimer;
+
+  String? get _readerViewerIdentifier {
+    final email = widget.user?.email.trim();
+    if (email != null && email.isNotEmpty) return email;
+    final username = widget.user?.username.trim();
+    return username == null || username.isEmpty ? null : username;
+  }
 
   @override
   void initState() {
@@ -78,7 +87,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _startNotificationPolling();
-      _refreshNotifications(refreshList: _index == 3);
+      _refreshNotifications(refreshList: _index == 4);
     } else if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached ||
@@ -117,9 +126,10 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   void _goTo(int index) {
     setState(() {
       _index = index;
-      if (index == 3) _notificationRefreshSignal++;
+      _visitedTabs.add(index);
+      if (index == 4) _notificationRefreshSignal++;
     });
-    if (index == 3) _loadUnreadCount();
+    if (index == 4) _loadUnreadCount();
   }
 
   Future<void> _refreshNotifications({required bool refreshList}) async {
@@ -147,10 +157,10 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         _goTo(1);
         return;
       case NotificationDestinationType.library:
-        _goTo(2);
+        _goTo(3);
         return;
       case NotificationDestinationType.profile:
-        _goTo(4);
+        _goTo(5);
         return;
       case NotificationDestinationType.premium:
         final user = widget.user;
@@ -192,7 +202,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           apiClient: widget.apiClient,
           comic: comic,
           preferences: widget.preferences,
-          viewerWatermark: widget.user?.username,
+          viewerIdentifier: _readerViewerIdentifier,
         ),
       );
     } catch (error) {
@@ -222,7 +232,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           chapters: chapters,
           initialIndex: index,
           comicTitle: comic.title,
-          viewerWatermark: widget.user?.username,
+          viewerIdentifier: _readerViewerIdentifier,
         ),
       );
     } catch (error) {
@@ -277,10 +287,12 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         apiClient: widget.apiClient,
         user: widget.user,
         onOpenExplore: () => _goTo(1),
-        onToggleTheme: widget.onToggleTheme,
-        isDarkMode: widget.isDarkMode,
       ),
       ExploreScreen(apiClient: widget.apiClient),
+      if (_visitedTabs.contains(2))
+        ForumScreen(apiClient: widget.apiClient, onSignIn: widget.onSignOut)
+      else
+        const SizedBox.shrink(),
       LibraryScreen(
         apiClient: widget.apiClient,
         isGuest: !widget.apiClient.hasToken,
@@ -300,7 +312,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         user: widget.user,
         isDarkMode: widget.isDarkMode,
         onToggleTheme: widget.onToggleTheme,
-        onOpenHistory: () => _goTo(2),
+        onOpenHistory: () => _goTo(3),
         onSignOut: widget.onSignOut,
         locale: widget.locale,
         onLocaleChanged: widget.onLocaleChanged,
@@ -330,6 +342,11 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
               icon: const Icon(Icons.explore_outlined),
               selectedIcon: const Icon(Icons.explore_rounded),
               label: context.tr('Explore'),
+            ),
+            NavigationDestination(
+              icon: const Icon(Icons.forum_outlined),
+              selectedIcon: const Icon(Icons.forum_rounded),
+              label: context.tr('Forum'),
             ),
             NavigationDestination(
               icon: const Icon(Icons.library_books_outlined),

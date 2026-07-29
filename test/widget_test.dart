@@ -137,7 +137,8 @@ class _MemoryAppPreferences implements AppPreferences {
   }
 
   @override
-  Future<String?> readPreferredReadingLanguage() async => preferredReadingLanguage;
+  Future<String?> readPreferredReadingLanguage() async =>
+      preferredReadingLanguage;
 
   @override
   Future<void> writePreferredReadingLanguage(String? languageCode) async {

@@ -9,6 +9,8 @@ class ForumThread {
     required this.isLocked,
     required this.views,
     required this.replies,
+    this.authorId,
+    this.isPinned = false,
   });
 
   final String id;
@@ -20,6 +22,8 @@ class ForumThread {
   final bool isLocked;
   final int views;
   final int replies;
+  final String? authorId;
+  final bool isPinned;
 
   factory ForumThread.fromJson(Map<String, dynamic> json) {
     return ForumThread(
@@ -32,12 +36,19 @@ class ForumThread {
       isLocked: json['isLocked'] == true,
       views: _asInt(json['views']),
       replies: _asInt(json['replies']),
+      authorId: _optionalString(json['authorId']),
+      isPinned: json['isPinned'] == true,
     );
   }
 
   static int _asInt(Object? value) {
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static String? _optionalString(Object? value) {
+    final text = value?.toString().trim();
+    return text == null || text.isEmpty ? null : text;
   }
 }
 

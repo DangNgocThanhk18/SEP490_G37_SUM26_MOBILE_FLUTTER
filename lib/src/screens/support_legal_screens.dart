@@ -73,7 +73,12 @@ class HelpCenterScreen extends StatelessWidget {
                       clipBehavior: Clip.antiAlias,
                       child: ExpansionTile(
                         tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-                        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        childrenPadding: const EdgeInsets.fromLTRB(
+                          16,
+                          0,
+                          16,
+                          16,
+                        ),
                         title: Text(
                           faq.question,
                           style: Theme.of(context).textTheme.titleMedium,

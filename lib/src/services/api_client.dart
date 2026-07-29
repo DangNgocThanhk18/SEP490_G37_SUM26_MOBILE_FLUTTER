@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/chapter.dart';
 import '../models/comic.dart';
+import '../models/content_comment.dart';
 import '../models/app_notification.dart';
 import '../models/forum.dart';
 import '../models/notification_preferences.dart';
@@ -41,9 +42,9 @@ class ApiClient {
     SessionStorage? sessionStorage,
     http.Client? httpClient,
   }) : baseUrl = resolveBaseUrl(baseUrl),
-        _timeout = timeout,
-        _sessionStorage = sessionStorage ?? const SecureSessionStorage(),
-        _httpClient = httpClient ?? http.Client();
+       _timeout = timeout,
+       _sessionStorage = sessionStorage ?? const SecureSessionStorage(),
+       _httpClient = httpClient ?? http.Client();
 
   static String resolveBaseUrl([String? override]) {
     const configured = String.fromEnvironment('API_BASE_URL');
@@ -74,10 +75,12 @@ class ApiClient {
   final http.Client _httpClient;
   String? _token;
   String? _refreshToken;
+  UserProfile? _currentUser;
   String _languageCode = 'en';
 
   bool get hasToken => _token != null && _token!.isNotEmpty;
   String? get refreshToken => _refreshToken;
+  UserProfile? get currentUser => _currentUser;
 
   void setLanguage(String languageCode) {
     if (languageCode == 'en' || languageCode == 'vi') {
@@ -88,6 +91,7 @@ class ApiClient {
   Future<void> clearSession() async {
     _token = null;
     _refreshToken = null;
+    _currentUser = null;
     await Future.wait([
       _sessionStorage.delete(_accessTokenKey),
       _sessionStorage.delete(_refreshTokenKey),
@@ -103,7 +107,10 @@ class ApiClient {
         _sessionStorage.read(_profileKey),
       ]);
       final token = values[0];
-      if (token == null || token.trim().isEmpty) return null;
+      if (token == null || token.trim().isEmpty) {
+        _currentUser = null;
+        return null;
+      }
 
       _token = token;
       _refreshToken = values[1];
@@ -111,7 +118,8 @@ class ApiClient {
       if (profileJson != null && profileJson.trim().isNotEmpty) {
         final decoded = jsonDecode(profileJson);
         if (decoded is Map<String, dynamic>) {
-          return UserProfile.fromJson(decoded);
+          _currentUser = UserProfile.fromJson(decoded);
+          return _currentUser;
         }
       }
 
@@ -121,6 +129,7 @@ class ApiClient {
     } catch (_) {
       _token = null;
       _refreshToken = null;
+      _currentUser = null;
       return null;
     }
   }
@@ -145,6 +154,7 @@ class ApiClient {
     _token = token;
     _refreshToken = refreshToken;
     final user = await getMe();
+    _currentUser = user;
     await Future.wait([
       _sessionStorage.write(_accessTokenKey, token),
       _sessionStorage.write(_refreshTokenKey, refreshToken),
@@ -159,7 +169,9 @@ class ApiClient {
     if (data is! Map<String, dynamic>) {
       throw const ApiException('Cannot read profile response.');
     }
-    return UserProfile.fromJson(data);
+    final user = UserProfile.fromJson(data);
+    _currentUser = user;
+    return user;
   }
 
   Future<void> changePassword({
@@ -196,6 +208,7 @@ class ApiClient {
       throw const ApiException('Cannot read updated profile response.');
     }
     final user = UserProfile.fromJson(data);
+    _currentUser = user;
     await _sessionStorage.write(_profileKey, jsonEncode(user.toJson()));
     return user;
   }
@@ -327,8 +340,8 @@ class ApiClient {
   }
 
   Future<NotificationPreferences> updateNotificationPreferences(
-      Map<String, bool> preferences,
-      ) async {
+    Map<String, bool> preferences,
+  ) async {
     final json = await _request(
       'PUT',
       '/notifications/preferences',
@@ -346,6 +359,38 @@ class ApiClient {
     final value = _unwrapData(json);
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  Future<List<ForumThread>> getForumThreads() async {
+    final json = await _request(
+      'GET',
+      '/forum-threads/all',
+      authorized: hasToken,
+    );
+    final data = _unwrapData(json);
+    if (data is! List) return const [];
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(ForumThread.fromJson)
+        .where((thread) => thread.id.isNotEmpty)
+        .toList();
+  }
+
+  Future<ForumThread> createForumThread({
+    required String title,
+    required String category,
+    required String content,
+  }) async {
+    final json = await _request(
+      'POST',
+      '/forum-threads',
+      body: {'title': title, 'category': category, 'content': content},
+    );
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read discussion thread.');
+    }
+    return ForumThread.fromJson(data);
   }
 
   Future<ForumThread> getForumThread(String threadId) async {
@@ -374,6 +419,26 @@ class ApiClient {
         .map(ForumComment.fromJson)
         .where((comment) => comment.id.isNotEmpty)
         .toList();
+  }
+
+  Future<ForumComment> createForumComment({
+    required String threadId,
+    required String content,
+    String? parentId,
+  }) async {
+    final json = await _request(
+      'POST',
+      '/forum-threads/${Uri.encodeComponent(threadId)}/comments',
+      body: {
+        'content': content.trim(),
+        if (parentId?.trim().isNotEmpty == true) 'parentId': parentId!.trim(),
+      },
+    );
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read the created forum reply.');
+    }
+    return ForumComment.fromJson(data);
   }
 
   Future<PremiumPlanSettings> getPremiumPlans() async {
@@ -444,8 +509,8 @@ class ApiClient {
   /// per-page bubbles). May be a subset of getComicTranslationLanguages
   /// if some languages haven't reached this particular chapter yet.
   Future<List<ChapterTranslation>> getChapterTranslations(
-      String chapterId,
-      ) async {
+    String chapterId,
+  ) async {
     final json = await _request(
       'GET',
       '/chapters/$chapterId/translations',
@@ -459,12 +524,112 @@ class ApiClient {
         .toList();
   }
 
+  Future<ContentCommentPage> getContentComments({
+    required ContentCommentTarget target,
+    required String targetId,
+    String? parentId,
+    int page = 1,
+    int size = 10,
+  }) async {
+    final resource = target == ContentCommentTarget.comic
+        ? 'comics'
+        : 'chapters';
+    final targetKey = target == ContentCommentTarget.comic
+        ? 'comicId'
+        : 'chapterId';
+    final query = Uri(
+      queryParameters: {
+        targetKey: targetId,
+        if (parentId?.trim().isNotEmpty == true) 'parentId': parentId!.trim(),
+        'page': '$page',
+        'size': '$size',
+      },
+    ).query;
+    final json = await _request(
+      'GET',
+      '/comments/$resource?$query',
+      authorized: hasToken,
+    );
+    final data = _unwrapData(json);
+    final items = data is List
+        ? data
+              .whereType<Map<String, dynamic>>()
+              .map(ContentComment.fromJson)
+              .where((comment) => comment.id.isNotEmpty)
+              .toList()
+        : <ContentComment>[];
+    final metadata = json['metadata'];
+    return ContentCommentPage(
+      items: items,
+      page: _asInt(
+        metadata is Map<String, dynamic> ? metadata['page'] : null,
+        fallback: page,
+      ),
+      pageSize: _asInt(
+        metadata is Map<String, dynamic> ? metadata['size'] : null,
+        fallback: size,
+      ),
+      totalElements: _asInt(
+        metadata is Map<String, dynamic> ? metadata['totalElements'] : null,
+        fallback: items.length,
+      ),
+      totalPages: _asInt(
+        metadata is Map<String, dynamic> ? metadata['totalPages'] : null,
+        fallback: items.isEmpty ? 0 : 1,
+      ),
+    );
+  }
+
+  Future<ContentComment> createContentComment({
+    required ContentCommentTarget target,
+    required String targetId,
+    required String content,
+    String? parentId,
+    String? mentionId,
+  }) async {
+    final resource = target == ContentCommentTarget.comic
+        ? 'comics'
+        : 'chapters';
+    final targetKey = target == ContentCommentTarget.comic
+        ? 'comicId'
+        : 'chapterId';
+    final json = await _request(
+      'POST',
+      '/comments/$resource',
+      body: {
+        targetKey: targetId,
+        'content': content.trim(),
+        if (parentId?.trim().isNotEmpty == true) 'parentId': parentId!.trim(),
+        if (mentionId?.trim().isNotEmpty == true)
+          'mentionId': mentionId!.trim(),
+      },
+    );
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read the created comment.');
+    }
+    return ContentComment.fromJson(data);
+  }
+
+  Future<void> deleteContentComment({
+    required ContentCommentTarget target,
+    required String commentId,
+  }) async {
+    final resource = target == ContentCommentTarget.comic
+        ? 'comics'
+        : 'chapters';
+    await _request(
+      'DELETE',
+      '/comments/$resource/${Uri.encodeComponent(commentId)}',
+    );
+  }
+
   Future<Map<String, dynamic>> _request(
-      String method,
-      String path, {
-        Map<String, dynamic>? body,
-        bool authorized = true,
-      }) async {
+    String method,
+    String path, {
+    Map<String, dynamic>? body,
+    bool authorized = true,
+  }) async {
     final uri = Uri.parse('$baseUrl$path');
 
     try {
@@ -493,7 +658,7 @@ class ApiClient {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final message = decoded is Map<String, dynamic>
             ? (decoded['message'] ?? decoded['error'] ?? 'Request failed')
-            .toString()
+                  .toString()
             : 'Request failed';
         throw ApiException(message);
       }
@@ -516,6 +681,12 @@ class ApiClient {
   Object? _unwrapData(Map<String, dynamic> json) {
     if (json.containsKey('data')) return json['data'];
     return json;
+  }
+
+  int _asInt(Object? value, {required int fallback}) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? fallback;
   }
 
   List<Comic> _parseComicList(Object? data) {
