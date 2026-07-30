@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
-import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/comiverse_logo.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({
@@ -101,25 +101,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Align(
+                      const Align(
                         alignment: Alignment.centerLeft,
-                        child: Container(
-                          width: 64,
-                          height: 64,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            gradient: LinearGradient(
-                              colors: [
-                                AppTheme.brandPurple,
-                                context.cvColors.brandPink,
-                              ],
-                            ),
-                          ),
-                          child: const Icon(
-                            Icons.auto_stories_rounded,
-                            size: 34,
-                          ),
-                        ),
+                        child: ComiVerseLogo(height: 40),
                       ),
                       const SizedBox(height: 28),
                       Text(

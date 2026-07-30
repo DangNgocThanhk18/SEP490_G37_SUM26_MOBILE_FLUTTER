@@ -6,6 +6,7 @@ import '../models/user_profile.dart';
 import '../services/api_client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/comiverse_logo.dart';
 import 'comic_detail_screen.dart';
 import 'ranking_screen.dart';
 
@@ -99,29 +100,9 @@ class _HomeScreenState extends State<HomeScreen>
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 16,
-        title: Row(
-          children: [
-            Container(
-              width: 30,
-              height: 30,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [AppTheme.brandPurple, context.cvColors.brandPink],
-                ),
-                borderRadius: BorderRadius.circular(7),
-              ),
-              child: const Icon(Icons.auto_stories_rounded, size: 18),
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Text(
-                'ComiVerse',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-            ),
-          ],
+        title: const Align(
+          alignment: Alignment.centerLeft,
+          child: ComiVerseLogo(height: 30),
         ),
         actions: [
           IconButton(

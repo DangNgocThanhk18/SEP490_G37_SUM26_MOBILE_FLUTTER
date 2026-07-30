@@ -10,6 +10,7 @@ import 'screens/main_shell.dart';
 import 'services/api_client.dart';
 import 'services/app_preferences.dart';
 import 'theme/app_theme.dart';
+import 'widgets/comiverse_logo.dart';
 
 class ComiVerseApp extends StatefulWidget {
   const ComiVerseApp({super.key, this.apiClient, this.preferences});
@@ -203,7 +204,7 @@ class _SessionSplashScreen extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.auto_stories_rounded, size: 52),
+            ComiVerseLogo(height: 40),
             SizedBox(height: 18),
             CircularProgressIndicator(),
           ],
