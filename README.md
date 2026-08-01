@@ -123,3 +123,20 @@ flutter test
 flutter build apk --debug
 flutter build web --debug
 ```
+
+## Launcher icon and native splash
+
+Mobile branding is derived from
+`../ComiVerse_FE/src/components/common/LogoIcon.jsx`. The square two-slash mark
+is used for Android/iOS launcher icons and Android 12+, while the full wordmark
+is used on the earlier Android and iOS launch screens.
+
+Regenerate the native resources after changing a branding source asset:
+
+```powershell
+dart run flutter_launcher_icons
+dart run flutter_native_splash:create
+```
+
+Android launchers cache icons. Uninstall the previous build or remove and add
+the launcher shortcut again when visually verifying an icon change.

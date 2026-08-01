@@ -34,6 +34,16 @@ migrate_working_dir/
 /coverage/
 firebase.local.json
 
+# Backend/Admin credentials are secrets and must never enter the mobile repo.
+.env
+.env.*
+!.env.example
+firebase-adminsdk-*.json
+service-account*.json
+*.pem
+*.p12
+*.key
+
 # Symbolication related
 app.*.symbols
 

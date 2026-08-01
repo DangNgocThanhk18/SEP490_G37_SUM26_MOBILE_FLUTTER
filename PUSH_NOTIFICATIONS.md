@@ -6,6 +6,12 @@ client files contain public app identifiers and are kept with the mobile project
 Firebase Admin/service-account credentials are secrets and must never be
 committed.
 
+GitHub secret scanning intentionally ignores only the two native client config
+paths through `.github/secret_scanning.yml`. Their auto-created Android/iOS API
+keys must remain restricted to Firebase-related APIs in Google Cloud. This
+exception never applies to an Admin SDK service-account JSON, private key, or
+the Railway `FIREBASE_SERVICE_ACCOUNT_BASE64` value.
+
 ## Firebase client
 
 Create Android and iOS applications in the same Firebase project using the

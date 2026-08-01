@@ -1,0 +1,18 @@
+flutter_native_splash:
+  android: true
+  ios: true
+  web: false
+  android_min_sdk: 23
+
+  color: "#FAF6F0"
+  color_dark: "#07040D"
+  image: assets/branding/comiverse_logo_light.png
+  image_dark: assets/branding/comiverse_logo_dark.png
+  android_gravity: center
+  ios_content_mode: center
+
+  android_12:
+    color: "#FAF6F0"
+    color_dark: "#07040D"
+    image: assets/branding/comiverse_mark_light.png
+    image_dark: assets/branding/comiverse_mark_dark.png
