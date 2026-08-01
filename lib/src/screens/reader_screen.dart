@@ -21,6 +21,8 @@ import 'premium_screen.dart';
 
 abstract final class ReaderImageLoadingPolicy {
   static const int preloadAheadCount = 4;
+  static const int preloadBehindCount = 2;
+  static const int preloadAnchorStep = 2;
 
   static List<String> urlsToPreload(List<String> urls, int pageIndex) {
     if (urls.isEmpty || pageIndex < 0 || pageIndex >= urls.length) {
@@ -35,6 +37,42 @@ abstract final class ReaderImageLoadingPolicy {
       result.add(urls[index]);
     }
     return result;
+  }
+
+  /// Keeps both scroll directions warm without retaining an entire chapter in
+  /// decoded memory. Forward pages are prioritised while reading down; pages
+  /// above the viewport are prioritised when the user scrolls back.
+  static List<String> urlsAroundPage(
+    List<String> urls,
+    int pageIndex, {
+    required bool movingBackwards,
+  }) {
+    if (urls.isEmpty || pageIndex < 0 || pageIndex >= urls.length) {
+      return const [];
+    }
+
+    final ahead = urlsToPreload(urls, pageIndex);
+    final behind = <String>[];
+    for (
+      var index = pageIndex - 1;
+      index >= 0 && behind.length < preloadBehindCount;
+      index--
+    ) {
+      behind.add(urls[index]);
+    }
+    return movingBackwards ? [...behind, ...ahead] : [...ahead, ...behind];
+  }
+
+  /// Once a visible page has been promoted for zoom, keep using that decoded
+  /// variant. Downgrading on every Fit Width caused a second provider/cache key
+  /// to replace the image and made repeated zooms appear to reload the page.
+  static int cacheWidthForResolution({
+    required int normalCacheWidth,
+    required bool highResolutionRequested,
+    required bool wasPromoted,
+  }) {
+    if (!highResolutionRequested && !wasPromoted) return normalCacheWidth;
+    return (normalCacheWidth * 2).clamp(normalCacheWidth, 2048);
   }
 }
 
@@ -454,13 +492,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
   late Future<List<ChapterTranslation>> _futureTranslations;
   late int _currentIndex;
   double _lastOffset = 0;
-  final Set<String> _scheduledImagePreloads = {};
+  final Set<String> _activeImagePreloads = {};
   final Map<String, double> _pageAspectRatios = {};
   Set<int> _highResolutionPageIndexes = const {};
   bool _readerGestureLocked = false;
   ScrollHoldController? _scrollHoldController;
   int _zoomResetGeneration = 0;
-  int _preloadAnchorPageIndex = -ReaderImageLoadingPolicy.preloadAheadCount;
+  int _preloadAnchorPageIndex = -1;
   int _preloadGeneration = 0;
   Future<void> _preloadQueue = Future<void>.value();
   late String? _selectedLanguage; // null = original (no bubble overlay)
@@ -523,9 +561,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _highResolutionPageIndexes = const {};
       _zoomResetGeneration++;
       _currentIndex = index;
-      _scheduledImagePreloads.clear();
+      _activeImagePreloads.clear();
       _pageAspectRatios.clear();
-      _preloadAnchorPageIndex = -ReaderImageLoadingPolicy.preloadAheadCount;
+      _preloadAnchorPageIndex = -1;
       _preloadGeneration++;
       _preloadQueue = Future<void>.value();
       _futureChapter = widget.apiClient.getChapterDetail(_chapter.id);
@@ -601,16 +639,20 @@ class _ReaderScreenState extends State<ReaderScreen> {
     setState(() => _zoomResetGeneration++);
   }
 
-  void _preloadFollowingPages(List<String> urls, int pageIndex) {
-    if (pageIndex <
-        _preloadAnchorPageIndex + ReaderImageLoadingPolicy.preloadAheadCount) {
+  void _preloadNearbyPages(List<String> urls, int pageIndex) {
+    final previousAnchor = _preloadAnchorPageIndex;
+    if (previousAnchor >= 0 &&
+        (pageIndex - previousAnchor).abs() <
+            ReaderImageLoadingPolicy.preloadAnchorStep) {
       return;
     }
+    final movingBackwards = previousAnchor >= 0 && pageIndex < previousAnchor;
     _preloadAnchorPageIndex = pageIndex;
-    final targets = ReaderImageLoadingPolicy.urlsToPreload(
+    final targets = ReaderImageLoadingPolicy.urlsAroundPage(
       urls,
       pageIndex,
-    ).where(_scheduledImagePreloads.add).toList(growable: false);
+      movingBackwards: movingBackwards,
+    ).where(_activeImagePreloads.add).toList(growable: false);
     if (targets.isEmpty) return;
 
     final generation = _preloadGeneration;
@@ -627,17 +669,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
   ) async {
     for (final url in urls) {
       if (!mounted || generation != _preloadGeneration) return;
-      var failed = false;
       try {
         await precacheImage(
           _readerImageProvider(url, context),
           context,
-          onError: (_, _) => failed = true,
+          onError: (_, _) {},
         );
       } catch (_) {
-        failed = true;
+        // Do not permanently mark failures; a later nearby window may retry
+        // after connectivity recovers.
+      } finally {
+        _activeImagePreloads.remove(url);
       }
-      if (failed) _scheduledImagePreloads.remove(url);
     }
   }
 
@@ -889,7 +932,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                                       ? const NeverScrollableScrollPhysics()
                                       : null,
                                   scrollCacheExtent:
-                                      const ScrollCacheExtent.viewport(1),
+                                      const ScrollCacheExtent.viewport(2),
                                   padding: const EdgeInsets.only(
                                     top: 68,
                                     bottom: 100,
@@ -925,10 +968,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                                         ) ??
                                         const <BubbleSelection>[];
                                     final imageUrl = chapter.images[index];
-                                    _preloadFollowingPages(
-                                      chapter.images,
-                                      index,
-                                    );
+                                    _preloadNearbyPages(chapter.images, index);
                                     return _BubbleOverlayImage(
                                       key: ValueKey(imageUrl),
                                       imageUrl: imageUrl,
@@ -1609,6 +1649,7 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
   int? _providerCacheWidth;
   double? _aspectRatio;
   bool _hasError = false;
+  bool _hasDisplayedImage = false;
   bool _usingHighResolution = false;
 
   @override
@@ -1624,9 +1665,11 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
     final cacheWidth = _readerImageCacheWidth(context);
     if (_provider == null || cacheWidth != _cacheWidth) {
       _cacheWidth = cacheWidth;
-      final targetWidth = _usingHighResolution
-          ? _readerZoomedImageCacheWidth(cacheWidth)
-          : cacheWidth;
+      final targetWidth = ReaderImageLoadingPolicy.cacheWidthForResolution(
+        normalCacheWidth: cacheWidth,
+        highResolutionRequested: _usingHighResolution,
+        wasPromoted: _usingHighResolution,
+      );
       _resolveImage(
         CachedNetworkImageProvider(widget.imageUrl, maxWidth: targetWidth),
         targetWidth,
@@ -1640,13 +1683,16 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
     if (oldWidget.imageUrl != widget.imageUrl) {
       _aspectRatio = widget.initialAspectRatio;
       _hasError = false;
+      _hasDisplayedImage = false;
       _usingHighResolution = widget.useHighResolution;
       final cacheWidth = _cacheWidth;
       final targetWidth = cacheWidth == null
           ? null
-          : widget.useHighResolution
-          ? _readerZoomedImageCacheWidth(cacheWidth)
-          : cacheWidth;
+          : ReaderImageLoadingPolicy.cacheWidthForResolution(
+              normalCacheWidth: cacheWidth,
+              highResolutionRequested: widget.useHighResolution,
+              wasPromoted: false,
+            );
       _resolveImage(
         CachedNetworkImageProvider(widget.imageUrl, maxWidth: targetWidth),
         targetWidth,
@@ -1657,13 +1703,23 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
   }
 
   void _switchImageResolution(bool useHighResolution) {
-    _usingHighResolution = useHighResolution;
     final normalCacheWidth = _cacheWidth;
     if (normalCacheWidth == null) return;
-    final targetWidth = useHighResolution
-        ? _readerZoomedImageCacheWidth(normalCacheWidth)
-        : normalCacheWidth;
-    if (_providerCacheWidth == targetWidth) return;
+    final targetWidth = ReaderImageLoadingPolicy.cacheWidthForResolution(
+      normalCacheWidth: normalCacheWidth,
+      highResolutionRequested: useHighResolution,
+      wasPromoted: _usingHighResolution,
+    );
+    final remainsPromoted = useHighResolution || _usingHighResolution;
+    if (_providerCacheWidth == targetWidth) {
+      _usingHighResolution = remainsPromoted;
+      return;
+    }
+
+    // Promotion is intentionally monotonic for this mounted page. Keeping the
+    // sharper provider avoids a normal -> zoomed -> normal provider swap every
+    // time the reader returns to Fit Width.
+    _usingHighResolution = remainsPromoted;
 
     _resolveImage(
       CachedNetworkImageProvider(widget.imageUrl, maxWidth: targetWidth),
@@ -1681,6 +1737,9 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
         if (h > 0) {
           final ratio = w / h;
           widget.onAspectRatioResolved(ratio);
+          final ratioChanged =
+              _aspectRatio == null || (_aspectRatio! - ratio).abs() > 0.0001;
+          if (!ratioChanged) return;
           if (synchronousCall) {
             _aspectRatio = ratio;
           } else {
@@ -1757,16 +1816,21 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
             ColoredBox(color: widget.placeholderColor),
             if (_provider != null)
               Image(
+                key: ValueKey('reader-page-image-${widget.imageUrl}'),
                 image: _provider!,
                 fit: BoxFit.cover,
-                filterQuality: widget.useHighResolution
+                filterQuality: _usingHighResolution
                     ? FilterQuality.medium
                     : FilterQuality.low,
                 gaplessPlayback: true,
-                frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                frameBuilder: (_, child, frame, wasSynchronouslyLoaded) {
                   if (wasSynchronouslyLoaded || frame != null) {
-                    return child;
+                    _hasDisplayedImage = true;
                   }
+                  // After the first frame, gaplessPlayback retains that frame
+                  // while the one-time zoomed variant is decoded. This avoids
+                  // flashing a spinner over an already visible comic page.
+                  if (_hasDisplayedImage) return child;
                   return const Center(child: CircularProgressIndicator());
                 },
               ),
@@ -1865,9 +1929,6 @@ int _readerImageCacheWidth(BuildContext context) {
   final physicalWidth = logicalWidth * MediaQuery.devicePixelRatioOf(context);
   return physicalWidth.ceil().clamp(480, 2048);
 }
-
-int _readerZoomedImageCacheWidth(int normalCacheWidth) =>
-    (normalCacheWidth * 2).clamp(normalCacheWidth, 2048);
 
 ImageProvider<Object> _readerImageProvider(String url, BuildContext context) =>
     CachedNetworkImageProvider(url, maxWidth: _readerImageCacheWidth(context));

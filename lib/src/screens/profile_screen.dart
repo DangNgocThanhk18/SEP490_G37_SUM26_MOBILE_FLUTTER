@@ -1279,6 +1279,7 @@ class _NotificationPreferencesSheetState
   String _notificationLabel(BuildContext context, String key) {
     return context.tr(switch (key) {
       'SYSTEM_BROADCASTS' => 'System announcements',
+      'COMMENT_REPLIES' => 'Comment replies',
       'FORUM_ACTIVITY' => 'Forum activity',
       'REVIEW_QUEUE' => 'Review queue',
       'SUBMISSION_STATUS' => 'Submission status',
@@ -1292,6 +1293,7 @@ class _NotificationPreferencesSheetState
   IconData _notificationIcon(String key) {
     return switch (key) {
       'SYSTEM_BROADCASTS' => Icons.campaign_outlined,
+      'COMMENT_REPLIES' => Icons.reply_rounded,
       'FORUM_ACTIVITY' => Icons.forum_outlined,
       'REVIEW_QUEUE' => Icons.rate_review_outlined,
       'SUBMISSION_STATUS' => Icons.fact_check_outlined,

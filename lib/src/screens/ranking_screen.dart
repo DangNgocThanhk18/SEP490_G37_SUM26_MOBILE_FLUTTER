@@ -22,7 +22,21 @@ class _RankingScreenState extends State<RankingScreen> {
   Future<List<Comic>> _load() =>
       widget.apiClient.getLeaderboard(timeframe: _timeframe);
 
-  void _reload() => setState(() => _future = _load());
+  Future<void> _reload({bool invalidate = true}) async {
+    if (invalidate) widget.apiClient.invalidateCatalogCache();
+    setState(() => _future = _load());
+    await _future;
+  }
+
+  void _selectTimeframe(String timeframe) {
+    if (_timeframe == timeframe) return;
+    setState(() {
+      _timeframe = timeframe;
+      // Leaderboards use separate cache keys for day/week/month, so changing
+      // the segment can reuse a recently viewed timeframe instantly.
+      _future = _load();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,10 +62,7 @@ class _RankingScreenState extends State<RankingScreen> {
                   ),
                 ],
                 selected: {_timeframe},
-                onSelectionChanged: (value) {
-                  _timeframe = value.first;
-                  _reload();
-                },
+                onSelectionChanged: (value) => _selectTimeframe(value.first),
               ),
             ),
           ),
@@ -76,7 +87,7 @@ class _RankingScreenState extends State<RankingScreen> {
                   );
                 }
                 return RefreshIndicator(
-                  onRefresh: () async => _reload(),
+                  onRefresh: _reload,
                   child: ListView.separated(
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                     itemCount: comics.length,

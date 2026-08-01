@@ -45,12 +45,14 @@ class ChapterDetail {
     required this.title,
     required this.chapterNumber,
     required this.images,
+    this.comicId,
   });
 
   final String id;
   final String title;
   final String chapterNumber;
   final List<String> images;
+  final String? comicId;
 
   factory ChapterDetail.fromJson(Map<String, dynamic> json) {
     final number = (json['chapterNumber'] ?? json['num'] ?? '').toString();
@@ -67,7 +69,13 @@ class ChapterDetail {
       title: (json['title'] ?? 'Chapter $number').toString(),
       chapterNumber: number,
       images: images,
+      comicId: _optionalString(json['comicId']),
     );
+  }
+
+  static String? _optionalString(Object? value) {
+    final text = value?.toString().trim();
+    return text == null || text.isEmpty ? null : text;
   }
 }
 

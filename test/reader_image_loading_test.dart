@@ -18,6 +18,51 @@ void main() {
     expect(ReaderImageLoadingPolicy.urlsToPreload(urls, -1), isEmpty);
   });
 
+  test('preloads nearby pages in the active scroll direction first', () {
+    final urls = List.generate(10, (index) => 'page-${index + 1}');
+
+    expect(
+      ReaderImageLoadingPolicy.urlsAroundPage(urls, 4, movingBackwards: false),
+      ['page-6', 'page-7', 'page-8', 'page-9', 'page-4', 'page-3'],
+    );
+    expect(
+      ReaderImageLoadingPolicy.urlsAroundPage(urls, 4, movingBackwards: true),
+      ['page-4', 'page-3', 'page-6', 'page-7', 'page-8', 'page-9'],
+    );
+  });
+
+  test('a zoomed image cache width is promoted once and never downgraded', () {
+    const normalWidth = 900;
+
+    final initial = ReaderImageLoadingPolicy.cacheWidthForResolution(
+      normalCacheWidth: normalWidth,
+      highResolutionRequested: false,
+      wasPromoted: false,
+    );
+    final zoomed = ReaderImageLoadingPolicy.cacheWidthForResolution(
+      normalCacheWidth: normalWidth,
+      highResolutionRequested: true,
+      wasPromoted: false,
+    );
+    final fittedAgain = ReaderImageLoadingPolicy.cacheWidthForResolution(
+      normalCacheWidth: normalWidth,
+      highResolutionRequested: false,
+      wasPromoted: true,
+    );
+
+    expect(initial, normalWidth);
+    expect(zoomed, 1800);
+    expect(fittedAgain, zoomed);
+    expect(
+      ReaderImageLoadingPolicy.cacheWidthForResolution(
+        normalCacheWidth: 1400,
+        highResolutionRequested: true,
+        wasPromoted: false,
+      ),
+      2048,
+    );
+  });
+
   test('zoom policy clamps scale and snaps near-fit values back to 1x', () {
     expect(ReaderZoomPolicy.clampScale(0.4), 1);
     expect(ReaderZoomPolicy.clampScale(2.8), 2.8);

@@ -38,6 +38,12 @@ class LoginResult {
 class ApiClient {
   static const deployedBaseUrl =
       'https://sep490g37sum26java-production.up.railway.app/api';
+  static const _catalogCacheDuration = Duration(minutes: 5);
+  static const _homeCacheDuration = Duration(minutes: 2);
+  static const _accountCacheDuration = Duration(seconds: 45);
+  static const _forumCacheDuration = Duration(minutes: 1);
+  static const _settingsCacheDuration = Duration(minutes: 10);
+  static const _maximumCachedReads = 40;
 
   ApiClient({
     String? baseUrl,
@@ -78,6 +84,9 @@ class ApiClient {
   String? _refreshToken;
   UserProfile? _currentUser;
   String _languageCode = 'en';
+  final Map<String, _CachedRead<Object>> _readCache = {};
+  final Map<String, Future<Object>> _inFlightReads = {};
+  int _readCacheEpoch = 0;
 
   bool get hasToken => _token != null && _token!.isNotEmpty;
   String? get refreshToken => _refreshToken;
@@ -89,7 +98,28 @@ class ApiClient {
     }
   }
 
+  /// Drops cached Home feed reads. Pull-to-refresh uses this to always request
+  /// fresh data while ordinary tab switching remains instant.
+  void invalidateHomeCache() {
+    _invalidateCachedReads(
+      (key) => key.startsWith('home:') || key.startsWith('library:history:'),
+    );
+  }
+
+  void invalidateCatalogCache() {
+    _invalidateCachedReads((key) => key.startsWith('catalog:'));
+  }
+
+  void invalidateLibraryCache() {
+    _invalidateCachedReads((key) => key.startsWith('library:'));
+  }
+
+  void invalidateForumCache() {
+    _invalidateCachedReads((key) => key.startsWith('forum:'));
+  }
+
   Future<void> clearSession() async {
+    _clearReadCache();
     _token = null;
     _refreshToken = null;
     _currentUser = null;
@@ -101,6 +131,7 @@ class ApiClient {
   }
 
   Future<UserProfile?> restoreSession() async {
+    _clearReadCache();
     try {
       final values = await Future.wait([
         _sessionStorage.read(_accessTokenKey),
@@ -139,6 +170,7 @@ class ApiClient {
     required String username,
     required String password,
   }) async {
+    _clearReadCache();
     final json = await _request(
       'POST',
       '/auth/login',
@@ -281,67 +313,99 @@ class ApiClient {
     }
   }
 
-  Future<List<Comic>> getComics() async {
-    final json = await _request('GET', '/comics/all', authorized: false);
-    final data = _unwrapData(json);
-    if (data is! List) return const [];
-    return data
-        .whereType<Map<String, dynamic>>()
-        .map(Comic.fromJson)
-        .where((comic) => comic.id.isNotEmpty)
-        .toList();
-  }
+  Future<List<Comic>> getComics() =>
+      _cachedRead('catalog:all', _catalogCacheDuration, () async {
+        final json = await _request('GET', '/comics/all', authorized: false);
+        final data = _unwrapData(json);
+        if (data is! List) return const <Comic>[];
+        return data
+            .whereType<Map<String, dynamic>>()
+            .map(Comic.fromJson)
+            .where((comic) => comic.id.isNotEmpty)
+            .toList();
+      });
 
-  Future<List<Comic>> getLeaderboard({String timeframe = 'day'}) async {
-    final json = await _request(
-      'GET',
-      '/comics/leaderboard?timeframe=${Uri.encodeQueryComponent(timeframe)}',
-      authorized: false,
-    );
-    return _parseComicList(_unwrapData(json));
-  }
+  Future<List<Comic>> getLeaderboard({String timeframe = 'day'}) => _cachedRead(
+    'catalog:leaderboard:$timeframe',
+    _catalogCacheDuration,
+    () async {
+      final json = await _request(
+        'GET',
+        '/comics/leaderboard?timeframe=${Uri.encodeQueryComponent(timeframe)}',
+        authorized: false,
+      );
+      return _parseComicList(_unwrapData(json));
+    },
+  );
 
-  Future<List<Comic>> getTopViewed({int size = 10}) async {
+  Future<List<Comic>> getTopViewed({
+    int size = 10,
+  }) => _cachedRead('home:top:$size', _homeCacheDuration, () async {
     final json = await _request(
       'GET',
       '/comics/explore?sortBy=${Uri.encodeQueryComponent('Total Views')}&size=$size',
       authorized: false,
     );
     return _parseComicPayload(_unwrapData(json));
-  }
+  });
 
-  Future<List<Comic>> getRecentlyUpdated({int size = 10}) async {
+  Future<List<Comic>> getRecentlyUpdated({
+    int size = 10,
+  }) => _cachedRead('home:updated:$size', _homeCacheDuration, () async {
     final json = await _request(
       'GET',
       '/comics/explore?sortBy=${Uri.encodeQueryComponent('Recently Updated')}&size=$size',
       authorized: false,
     );
     return _parseComicPayload(_unwrapData(json));
-  }
+  });
 
   Future<List<Comic>> getRecommendations({int size = 10}) async {
     if (!hasToken) return getTopViewed(size: size);
-    final json = await _request('GET', '/comics/recommendations?size=$size');
-    return _parseComicPayload(_unwrapData(json));
+    return _cachedRead(
+      'home:recommendations:$_viewerCacheKey:$size',
+      _homeCacheDuration,
+      () async {
+        final json = await _request(
+          'GET',
+          '/comics/recommendations?size=$size',
+        );
+        return _parseComicPayload(_unwrapData(json));
+      },
+    );
   }
 
-  Future<List<Comic>> getSavedComics() async {
-    final json = await _request('GET', '/saves/my-saves');
-    return _parseComicList(_unwrapData(json));
-  }
+  Future<List<Comic>> getSavedComics() => _cachedRead(
+    'library:saved:$_viewerCacheKey',
+    _accountCacheDuration,
+    () async {
+      final json = await _request('GET', '/saves/my-saves');
+      return _parseComicList(_unwrapData(json));
+    },
+  );
 
-  Future<List<Comic>> getLikedComics() async {
-    final json = await _request('GET', '/likes/my-likes');
-    return _parseComicList(_unwrapData(json));
-  }
+  Future<List<Comic>> getLikedComics() => _cachedRead(
+    'library:liked:$_viewerCacheKey',
+    _accountCacheDuration,
+    () async {
+      final json = await _request('GET', '/likes/my-likes');
+      return _parseComicList(_unwrapData(json));
+    },
+  );
 
-  Future<List<Comic>> getReadingHistory() async {
-    final json = await _request('GET', '/reading-histories/my-history');
-    return _parseComicList(_unwrapData(json));
-  }
+  Future<List<Comic>> getReadingHistory() => _cachedRead(
+    'library:history:$_viewerCacheKey',
+    _accountCacheDuration,
+    () async {
+      final json = await _request('GET', '/reading-histories/my-history');
+      return _parseComicList(_unwrapData(json));
+    },
+  );
 
   Future<void> deleteReadingHistory(String comicId) async {
     await _request('DELETE', '/reading-histories/comic/$comicId');
+    invalidateHomeCache();
+    invalidateLibraryCache();
   }
 
   Future<bool> checkSaved(String comicId) async {
@@ -360,6 +424,7 @@ class ApiClient {
       '/saves/toggle/$comicId',
       body: const {},
     );
+    invalidateLibraryCache();
     return _unwrapData(json) == true;
   }
 
@@ -369,6 +434,7 @@ class ApiClient {
       '/likes/toggle/$comicId',
       body: const {},
     );
+    invalidateLibraryCache();
     return _unwrapData(json) == true;
   }
 
@@ -429,20 +495,39 @@ class ApiClient {
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
-  Future<List<ForumThread>> getForumThreads() async {
-    final json = await _request(
-      'GET',
-      '/forum-threads/all',
-      authorized: hasToken,
+  Future<void> registerPushDevice({
+    required String token,
+    required String platform,
+  }) async {
+    await _request(
+      'POST',
+      '/notifications/devices',
+      body: {'token': token, 'platform': platform},
     );
-    final data = _unwrapData(json);
-    if (data is! List) return const [];
-    return data
-        .whereType<Map<String, dynamic>>()
-        .map(ForumThread.fromJson)
-        .where((thread) => thread.id.isNotEmpty)
-        .toList();
   }
+
+  Future<void> unregisterPushDevice(String token) async {
+    await _request('DELETE', '/notifications/devices', body: {'token': token});
+  }
+
+  Future<List<ForumThread>> getForumThreads() => _cachedRead(
+    'forum:threads:$_viewerCacheKey',
+    _forumCacheDuration,
+    () async {
+      final json = await _request(
+        'GET',
+        '/forum-threads/all',
+        authorized: hasToken,
+      );
+      final data = _unwrapData(json);
+      if (data is! List) return const <ForumThread>[];
+      return data
+          .whereType<Map<String, dynamic>>()
+          .map(ForumThread.fromJson)
+          .where((thread) => thread.id.isNotEmpty)
+          .toList();
+    },
+  );
 
   Future<ForumThread> createForumThread({
     required String title,
@@ -458,6 +543,7 @@ class ApiClient {
     if (data is! Map<String, dynamic>) {
       throw const ApiException('Cannot read discussion thread.');
     }
+    invalidateForumCache();
     return ForumThread.fromJson(data);
   }
 
@@ -506,17 +592,19 @@ class ApiClient {
     if (data is! Map<String, dynamic>) {
       throw const ApiException('Cannot read the created forum reply.');
     }
+    invalidateForumCache();
     return ForumComment.fromJson(data);
   }
 
-  Future<PremiumPlanSettings> getPremiumPlans() async {
-    final json = await _request('GET', '/plans', authorized: false);
-    final data = _unwrapData(json);
-    if (data is! Map<String, dynamic>) {
-      throw const ApiException('Cannot read premium plan settings.');
-    }
-    return PremiumPlanSettings.fromJson(data);
-  }
+  Future<PremiumPlanSettings> getPremiumPlans() =>
+      _cachedRead('settings:premium-plans', _settingsCacheDuration, () async {
+        final json = await _request('GET', '/plans', authorized: false);
+        final data = _unwrapData(json);
+        if (data is! Map<String, dynamic>) {
+          throw const ApiException('Cannot read premium plan settings.');
+        }
+        return PremiumPlanSettings.fromJson(data);
+      });
 
   Future<void> upgradePlan(String planType) async {
     await _request('POST', '/plans/upgrade', body: {'planType': planType});
@@ -774,8 +862,93 @@ class ApiClient {
     return const [];
   }
 
+  String get _viewerCacheKey {
+    final token = _token;
+    if (token == null || token.isEmpty) return 'guest';
+    return token.hashCode.toUnsigned(32).toRadixString(16);
+  }
+
+  Future<T> _cachedRead<T extends Object>(
+    String key,
+    Duration duration,
+    Future<T> Function() loader,
+  ) {
+    final now = DateTime.now();
+    final cached = _readCache[key];
+    if (cached != null) {
+      if (now.difference(cached.storedAt) <= duration) {
+        return Future.value(cached.value as T);
+      }
+      _readCache.remove(key);
+    }
+
+    final inFlight = _inFlightReads[key];
+    if (inFlight != null) {
+      return inFlight.then((value) => value as T);
+    }
+
+    final epoch = _readCacheEpoch;
+    final future = _loadAndCache(key, epoch, loader);
+    _inFlightReads[key] = future;
+    return future;
+  }
+
+  Future<T> _loadAndCache<T extends Object>(
+    String key,
+    int epoch,
+    Future<T> Function() loader,
+  ) async {
+    try {
+      final value = await loader();
+      if (epoch == _readCacheEpoch) {
+        if (!_readCache.containsKey(key) &&
+            _readCache.length >= _maximumCachedReads) {
+          var oldestKey = _readCache.keys.first;
+          for (final entry in _readCache.entries) {
+            if (entry.value.storedAt.isBefore(
+              _readCache[oldestKey]!.storedAt,
+            )) {
+              oldestKey = entry.key;
+            }
+          }
+          _readCache.remove(oldestKey);
+        }
+        _readCache[key] = _CachedRead<Object>(
+          value: value,
+          storedAt: DateTime.now(),
+        );
+      }
+      return value;
+    } finally {
+      // An invalidation clears the in-flight map and advances the epoch. Do
+      // not let an older request remove a newer request for the same key.
+      if (epoch == _readCacheEpoch) _inFlightReads.remove(key);
+    }
+  }
+
+  void _invalidateCachedReads(bool Function(String key) matches) {
+    _readCache.removeWhere((key, _) => matches(key));
+    // In-flight HTTP requests cannot be cancelled, but advancing the epoch
+    // prevents their result from repopulating stale cache entries.
+    _readCacheEpoch++;
+    _inFlightReads.clear();
+  }
+
+  void _clearReadCache() {
+    _readCacheEpoch++;
+    _readCache.clear();
+    _inFlightReads.clear();
+  }
+
   String? _trimmedOrNull(String? value) {
     final trimmed = value?.trim();
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
   }
+}
+
+class _CachedRead<T extends Object> {
+  const _CachedRead({required this.value, required this.storedAt});
+
+  final T value;
+  final DateTime storedAt;
 }

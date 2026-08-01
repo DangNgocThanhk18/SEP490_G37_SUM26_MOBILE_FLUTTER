@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../l10n/app_localizations.dart';
@@ -110,17 +111,17 @@ class ComicCoverImage extends StatelessWidget {
       child: const Center(child: Icon(Icons.auto_stories_rounded, size: 34)),
     );
     if (url == null || url!.trim().isEmpty) return placeholder;
-    return Image.network(
-      url!,
+    return CachedNetworkImage(
+      imageUrl: url!,
       fit: fit,
-      errorBuilder: (_, _, _) => placeholder,
-      loadingBuilder: (context, child, progress) {
-        if (progress == null) return child;
-        return ColoredBox(
-          color: context.cvColors.surfaceSubtle,
-          child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-        );
-      },
+      fadeInDuration: const Duration(milliseconds: 140),
+      fadeOutDuration: const Duration(milliseconds: 80),
+      useOldImageOnUrlChange: true,
+      errorWidget: (_, _, _) => placeholder,
+      placeholder: (_, _) => ColoredBox(
+        color: context.cvColors.surfaceSubtle,
+        child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      ),
     );
   }
 }

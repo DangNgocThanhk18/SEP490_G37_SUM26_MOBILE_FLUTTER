@@ -9,14 +9,21 @@ import 'screens/login_screen.dart';
 import 'screens/main_shell.dart';
 import 'services/api_client.dart';
 import 'services/app_preferences.dart';
+import 'services/push_notifications.dart';
 import 'theme/app_theme.dart';
 import 'widgets/comiverse_logo.dart';
 
 class ComiVerseApp extends StatefulWidget {
-  const ComiVerseApp({super.key, this.apiClient, this.preferences});
+  const ComiVerseApp({
+    super.key,
+    this.apiClient,
+    this.preferences,
+    this.pushNotifications,
+  });
 
   final ApiClient? apiClient;
   final AppPreferences? preferences;
+  final PushNotificationCoordinator? pushNotifications;
 
   @override
   State<ComiVerseApp> createState() => _ComiVerseAppState();
@@ -25,6 +32,8 @@ class ComiVerseApp extends StatefulWidget {
 class _ComiVerseAppState extends State<ComiVerseApp> {
   late final ApiClient _apiClient;
   late final AppPreferences _preferences;
+  late final PushNotificationCoordinator _pushNotifications;
+  late final bool _ownsPushNotifications;
   UserProfile? _user;
   bool _isGuest = false;
   bool _isRestoringSession = true;
@@ -36,6 +45,9 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
     super.initState();
     _apiClient = widget.apiClient ?? ApiClient();
     _preferences = widget.preferences ?? const SecureAppPreferences();
+    _ownsPushNotifications = widget.pushNotifications == null;
+    _pushNotifications =
+        widget.pushNotifications ?? FirebasePushNotifications();
     _restoreAppState();
   }
 
@@ -56,6 +68,11 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
       if (themeMode != null) _themeMode = themeMode;
       _isRestoringSession = false;
     });
+    if (_apiClient.hasToken) {
+      unawaited(_pushNotifications.syncAuthenticatedUser(_apiClient));
+    } else {
+      unawaited(_pushNotifications.initialize());
+    }
   }
 
   Future<String?> _readLanguageCode() async {
@@ -123,6 +140,7 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
       _user = user;
       _isGuest = false;
     });
+    unawaited(_pushNotifications.syncAuthenticatedUser(_apiClient));
   }
 
   void _handleUserChanged(UserProfile user) {
@@ -137,12 +155,19 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
   }
 
   Future<void> _handleSignOut() async {
+    await _pushNotifications.unregisterAuthenticatedUser(_apiClient);
     await _apiClient.clearSession();
     if (!mounted) return;
     setState(() {
       _user = null;
       _isGuest = false;
     });
+  }
+
+  @override
+  void dispose() {
+    if (_ownsPushNotifications) _pushNotifications.dispose();
+    super.dispose();
   }
 
   @override
@@ -182,6 +207,7 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
               onLocaleChanged: _changeLocale,
               onUserChanged: _handleUserChanged,
               preferences: _preferences,
+              pushNotifications: _pushNotifications,
             )
           : LoginScreen(
               apiClient: _apiClient,

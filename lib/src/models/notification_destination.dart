@@ -7,6 +7,7 @@ enum NotificationDestinationType {
   premium,
   comic,
   chapter,
+  legacyChapter,
   forumThread,
   unsupported,
 }
@@ -80,6 +81,7 @@ class NotificationDestination {
       return NotificationDestination(
         type: NotificationDestinationType.comic,
         comicId: segments[1],
+        commentId: uri.queryParameters['comment'],
       );
     }
 
@@ -90,6 +92,25 @@ class NotificationDestination {
         type: NotificationDestinationType.chapter,
         comicId: segments[1],
         chapterId: segments[3],
+        commentId: uri.queryParameters['comment'],
+      );
+    }
+
+    // Compatibility with notifications created before the canonical mobile
+    // action URL changed from `/comics/{id}` to `/comic/{id}`.
+    if (segments.length == 2 && segments.first == 'comics') {
+      return NotificationDestination(
+        type: NotificationDestinationType.comic,
+        comicId: segments[1],
+        commentId: uri.queryParameters['comment'],
+      );
+    }
+
+    if (segments.length == 2 && segments.first == 'chapters') {
+      return NotificationDestination(
+        type: NotificationDestinationType.legacyChapter,
+        chapterId: segments[1],
+        commentId: uri.queryParameters['comment'],
       );
     }
 

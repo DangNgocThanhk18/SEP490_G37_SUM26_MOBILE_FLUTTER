@@ -75,6 +75,46 @@ flutter run --dart-define=API_BASE_URL=https://another-host.example/api
 flutter build apk --release --dart-define=API_BASE_URL=https://another-host.example/api
 ```
 
+## Push notifications
+
+ComiVerse uses Firebase Cloud Messaging for account-targeted notifications
+while the app is foregrounded, backgrounded, or terminated. The app remains
+usable when Firebase is not configured, but push delivery is disabled until
+both the mobile client and Spring Boot credentials are provisioned.
+
+The Android and iOS native Firebase files are installed and connect normal
+mobile runs to project `comiverse-cdb7b`:
+
+```powershell
+flutter run
+```
+
+For CI builds that intentionally omit the native Firebase files, copy
+`firebase.local.example.json` to the ignored `firebase.local.json`, fill the
+remaining API key, and launch with:
+
+```powershell
+flutter run --dart-define-from-file=firebase.local.json
+```
+
+The Firebase Android application must use package name
+`com.example.comiverse_mobile`. For iOS, enable Push Notifications and
+Background Modes/Remote notifications for bundle ID
+`com.example.comiverseMobile`, then configure an APNs key in Firebase.
+
+On Railway, configure these backend variables and redeploy Spring Boot:
+
+```text
+FIREBASE_PUSH_ENABLED=true
+FIREBASE_PROJECT_ID=comiverse-cdb7b
+FIREBASE_SERVICE_ACCOUNT_BASE64=<base64-service-account-json>
+```
+
+`FIREBASE_SERVICE_ACCOUNT_JSON` or `GOOGLE_APPLICATION_CREDENTIALS` can be
+used instead of the Base64 value. Never commit a service-account JSON file or
+its private key. Users must open the app once and allow notification permission
+before the device can be registered to their account.
+
 ## Verification
 
 ```powershell

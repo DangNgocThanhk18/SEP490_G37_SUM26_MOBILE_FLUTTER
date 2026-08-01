@@ -37,7 +37,7 @@ class _ForumScreenState extends State<ForumScreen>
   }
 
   Future<List<ForumThread>> _load() async {
-    final threads = await widget.apiClient.getForumThreads();
+    final threads = [...await widget.apiClient.getForumThreads()];
     threads.sort((a, b) {
       if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
       final aDate = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
@@ -48,6 +48,7 @@ class _ForumScreenState extends State<ForumScreen>
   }
 
   Future<void> _refresh() async {
+    widget.apiClient.invalidateForumCache();
     final future = _load();
     setState(() {
       _future = future;

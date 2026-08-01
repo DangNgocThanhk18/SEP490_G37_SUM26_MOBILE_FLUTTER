@@ -131,6 +131,94 @@ void main() {
     expect(captured?.body, contains('filename="avatar.png"'));
     expect(captured?.body.toLowerCase(), contains('content-type: image/png'));
   });
+
+  test('caches stable reads until their scope is invalidated', () async {
+    final requests = <http.Request>[];
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8081/api',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        return http.Response(
+          jsonEncode({
+            'success': true,
+            'data': [
+              {'id': 'comic-1', 'title': 'Cached comic'},
+            ],
+          }),
+          200,
+        );
+      }),
+    );
+
+    final first = await client.getComics();
+    final second = await client.getComics();
+
+    expect(first.single.title, 'Cached comic');
+    expect(second.single.title, 'Cached comic');
+    expect(requests, hasLength(1));
+
+    client.invalidateCatalogCache();
+    await client.getComics();
+    expect(requests, hasLength(2));
+  });
+
+  test('does not cache live notification counters', () async {
+    var requestCount = 0;
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8081/api',
+      httpClient: MockClient((_) async {
+        requestCount++;
+        return http.Response(
+          jsonEncode({'success': true, 'data': requestCount}),
+          200,
+        );
+      }),
+    );
+
+    expect(await client.getUnreadNotificationCount(), 1);
+    expect(await client.getUnreadNotificationCount(), 2);
+    expect(requestCount, 2);
+  });
+
+  test('registers and unregisters the signed-in push installation', () async {
+    final storage = _MemorySessionStorage();
+    await storage.write('comiverse_access_token', 'access-token');
+    await storage.write(
+      'comiverse_user_profile',
+      jsonEncode({
+        'userId': 'reader-1',
+        'username': 'reader',
+        'email': 'reader@comiverse.test',
+      }),
+    );
+    final requests = <http.Request>[];
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8081/api',
+      sessionStorage: storage,
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        return http.Response(jsonEncode({'success': true}), 200);
+      }),
+    );
+    await client.restoreSession();
+
+    await client.registerPushDevice(
+      token: 'fcm-registration-token',
+      platform: 'android',
+    );
+    await client.unregisterPushDevice('fcm-registration-token');
+
+    expect(requests, hasLength(2));
+    expect(requests[0].method, 'POST');
+    expect(requests[0].url.path, '/api/notifications/devices');
+    expect(requests[0].headers['authorization'], 'Bearer access-token');
+    expect(jsonDecode(requests[0].body), {
+      'token': 'fcm-registration-token',
+      'platform': 'android',
+    });
+    expect(requests[1].method, 'DELETE');
+    expect(jsonDecode(requests[1].body), {'token': 'fcm-registration-token'});
+  });
 }
 
 class _MemorySessionStorage implements SessionStorage {

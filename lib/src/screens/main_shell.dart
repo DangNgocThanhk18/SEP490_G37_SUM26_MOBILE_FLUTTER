@@ -11,6 +11,7 @@ import '../models/notification_destination.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
 import '../services/app_preferences.dart';
+import '../services/push_notifications.dart';
 import '../theme/app_theme.dart';
 import '../widgets/in_app_notification.dart';
 import 'comic_detail_screen.dart';
@@ -40,6 +41,7 @@ class MainShell extends StatefulWidget {
     this.onLocaleChanged,
     this.onUserChanged,
     this.preferences,
+    this.pushNotifications,
   });
 
   final ApiClient apiClient;
@@ -53,6 +55,7 @@ class MainShell extends StatefulWidget {
   final ValueChanged<Locale>? onLocaleChanged;
   final ValueChanged<UserProfile>? onUserChanged;
   final AppPreferences? preferences;
+  final PushNotificationCoordinator? pushNotifications;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -64,6 +67,8 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _unreadCount = 0;
   int _notificationRefreshSignal = 0;
   Timer? _notificationTimer;
+  StreamSubscription<AppNotification>? _foregroundPushSubscription;
+  StreamSubscription<AppNotification>? _openedPushSubscription;
 
   String? get _readerViewerIdentifier {
     final email = widget.user?.email.trim();
@@ -78,11 +83,23 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _loadUnreadCount();
     _startNotificationPolling();
+    _foregroundPushSubscription = widget
+        .pushNotifications
+        ?.foregroundNotifications
+        .listen(_handleForegroundPush);
+    _openedPushSubscription = widget.pushNotifications?.openedNotifications
+        .listen(_handleOpenedPush);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final pending = widget.pushNotifications?.takePendingOpenedNotification();
+      if (pending != null) unawaited(_handleOpenedPush(pending));
+    });
   }
 
   @override
   void dispose() {
     _notificationTimer?.cancel();
+    unawaited(_foregroundPushSubscription?.cancel());
+    unawaited(_openedPushSubscription?.cancel());
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -153,6 +170,49 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _handleForegroundPush(AppNotification notification) async {
+    if (!mounted || !widget.apiClient.hasToken) return;
+    await _refreshNotifications(
+      refreshList: _section == _ShellSection.notifications,
+    );
+    if (!mounted) return;
+    InAppNotifications.show(
+      context,
+      type: InAppNotificationType.information,
+      title: notification.title,
+      message: notification.message,
+      duration: const Duration(seconds: 5),
+      action: notification.actionUrl == null
+          ? null
+          : InAppNotificationAction(
+              label: context.tr('Open'),
+              onPressed: () => _handleOpenedPush(notification),
+            ),
+    );
+  }
+
+  Future<void> _handleOpenedPush(AppNotification notification) async {
+    if (!mounted || !widget.apiClient.hasToken) return;
+    var opened = notification;
+    if (_isUuid(notification.id)) {
+      try {
+        await widget.apiClient.markNotificationRead(notification.id);
+        opened = notification.copyWith(isRead: true);
+      } catch (_) {
+        // The action is still useful if the read receipt races a revoked or
+        // already-deleted notification.
+      }
+    }
+    await _refreshNotifications(
+      refreshList: _section == _ShellSection.notifications,
+    );
+    if (mounted) await _openNotification(opened);
+  }
+
+  bool _isUuid(String value) => RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+  ).hasMatch(value);
+
   Future<void> _openNotification(AppNotification notification) async {
     final destination = NotificationDestination.parse(notification.actionUrl);
     switch (destination.type) {
@@ -180,6 +240,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         return;
       case NotificationDestinationType.chapter:
         await _openChapter(destination.comicId!, destination.chapterId!);
+        return;
+      case NotificationDestinationType.legacyChapter:
+        await _openLegacyChapter(destination.chapterId!);
         return;
       case NotificationDestinationType.forumThread:
         await _push(
@@ -249,6 +312,25 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _openLegacyChapter(String chapterId) async {
+    try {
+      final chapter = await _withLoading(
+        widget.apiClient.getChapterDetail(chapterId),
+      );
+      if (!mounted) return;
+      final comicId = chapter.comicId;
+      if (comicId == null || comicId.isEmpty) {
+        throw ApiException(
+          context.tr('This notification is available in the web workspace.'),
+        );
+      }
+      await _openChapter(comicId, chapterId);
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(context.localizedError(error));
+    }
+  }
+
   Future<T> _withLoading<T>(Future<T> operation) async {
     final navigator = Navigator.of(context, rootNavigator: true);
     final loadingRoute = InAppModal.showLoading(
@@ -297,17 +379,23 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         onOpenNotifications: () => _goTo(_ShellSection.notifications),
         unreadCount: _unreadCount,
       ),
-      ExploreScreen(apiClient: widget.apiClient),
+      if (_visitedTabs.contains(_ShellSection.explore))
+        ExploreScreen(apiClient: widget.apiClient)
+      else
+        const SizedBox.shrink(),
       if (_visitedTabs.contains(_ShellSection.forum))
         ForumScreen(apiClient: widget.apiClient, onSignIn: widget.onSignOut)
       else
         const SizedBox.shrink(),
-      LibraryScreen(
-        apiClient: widget.apiClient,
-        isGuest: !widget.apiClient.hasToken,
-        onSignIn: widget.onSignOut,
-        onExplore: () => _goTo(_ShellSection.explore),
-      ),
+      if (_visitedTabs.contains(_ShellSection.library))
+        LibraryScreen(
+          apiClient: widget.apiClient,
+          isGuest: !widget.apiClient.hasToken,
+          onSignIn: widget.onSignOut,
+          onExplore: () => _goTo(_ShellSection.explore),
+        )
+      else
+        const SizedBox.shrink(),
       if (_visitedTabs.contains(_ShellSection.notifications))
         NotificationsScreen(
           apiClient: widget.apiClient,
@@ -319,19 +407,22 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         )
       else
         const SizedBox.shrink(),
-      ProfileScreen(
-        apiClient: widget.apiClient,
-        user: widget.user,
-        isDarkMode: widget.isDarkMode,
-        onToggleTheme: widget.onToggleTheme,
-        onOpenHistory: () => _goTo(_ShellSection.library),
-        onSignOut: widget.onSignOut,
-        locale: widget.locale,
-        onLocaleChanged: widget.onLocaleChanged,
-        themeMode: widget.themeMode,
-        onThemeModeChanged: widget.onThemeModeChanged,
-        onUserChanged: widget.onUserChanged,
-      ),
+      if (_visitedTabs.contains(_ShellSection.profile))
+        ProfileScreen(
+          apiClient: widget.apiClient,
+          user: widget.user,
+          isDarkMode: widget.isDarkMode,
+          onToggleTheme: widget.onToggleTheme,
+          onOpenHistory: () => _goTo(_ShellSection.library),
+          onSignOut: widget.onSignOut,
+          locale: widget.locale,
+          onLocaleChanged: widget.onLocaleChanged,
+          themeMode: widget.themeMode,
+          onThemeModeChanged: widget.onThemeModeChanged,
+          onUserChanged: widget.onUserChanged,
+        )
+      else
+        const SizedBox.shrink(),
     ];
 
     return PopScope(
@@ -343,7 +434,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
       },
       child: Scaffold(
         body: IndexedStack(index: _section.index, children: pages),
-        floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+        floatingActionButtonLocation: const _IntegratedHomeFabLocation(),
         floatingActionButton: _HomeNavigationButton(
           key: const Key('main-nav-home'),
           label: context.tr('Home'),
@@ -376,14 +467,14 @@ class _ComiVerseBottomBar extends StatelessWidget {
     final scheme = theme.colorScheme;
 
     return BottomAppBar(
-      height: 72,
+      height: 68,
       padding: EdgeInsets.zero,
       color: theme.navigationBarTheme.backgroundColor ?? scheme.surface,
       surfaceTintColor: Colors.transparent,
       shadowColor: scheme.shadow.withValues(alpha: 0.24),
       elevation: 12,
       shape: const CircularNotchedRectangle(),
-      notchMargin: 8,
+      notchMargin: 4,
       child: Row(
         children: [
           _BottomNavigationItem(
@@ -404,7 +495,7 @@ class _ComiVerseBottomBar extends StatelessWidget {
             selected: selectedSection == _ShellSection.forum,
             onPressed: () => onSelected(_ShellSection.forum),
           ),
-          const SizedBox(width: 80),
+          const SizedBox(width: 66),
           _BottomNavigationItem(
             key: const Key('main-nav-library'),
             sortOrder: 4,
@@ -426,6 +517,20 @@ class _ComiVerseBottomBar extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _IntegratedHomeFabLocation extends FloatingActionButtonLocation {
+  const _IntegratedHomeFabLocation();
+
+  @override
+  Offset getOffset(ScaffoldPrelayoutGeometry scaffoldGeometry) {
+    final docked = FloatingActionButtonLocation.centerDocked.getOffset(
+      scaffoldGeometry,
+    );
+    // Keep the colored Home action only slightly raised so it still reads as
+    // part of the navigation bar instead of a separate floating action.
+    return docked + const Offset(0, 4);
   }
 }
 
@@ -537,15 +642,15 @@ class _HomeNavigationButton extends StatelessWidget {
       child: Tooltip(
         message: label,
         child: AnimatedScale(
-          scale: selected ? 1.05 : 1,
+          scale: selected ? 1.02 : 1,
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutCubic,
           child: SizedBox.square(
-            dimension: 68,
+            dimension: 58,
             child: Material(
               color: Colors.transparent,
-              elevation: selected ? 11 : 8,
-              shadowColor: context.cvColors.brandPink.withValues(alpha: 0.45),
+              elevation: selected ? 6 : 4,
+              shadowColor: context.cvColors.brandPink.withValues(alpha: 0.32),
               shape: const CircleBorder(),
               clipBehavior: Clip.antiAlias,
               child: Ink(
@@ -556,7 +661,7 @@ class _HomeNavigationButton extends StatelessWidget {
                     end: Alignment.bottomRight,
                     colors: [AppTheme.brandPurple, context.cvColors.brandPink],
                   ),
-                  border: Border.all(color: scheme.surface, width: 3),
+                  border: Border.all(color: scheme.surface, width: 2),
                 ),
                 child: InkWell(
                   onTap: onPressed,
@@ -568,7 +673,7 @@ class _HomeNavigationButton extends StatelessWidget {
                         Icon(
                           selected ? Icons.home_rounded : Icons.home_outlined,
                           color: scheme.onPrimary,
-                          size: 29,
+                          size: 25,
                         ),
                         const SizedBox(height: 1),
                         Text(
@@ -577,7 +682,7 @@ class _HomeNavigationButton extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: scheme.onPrimary,
-                            fontSize: 9,
+                            fontSize: 8.5,
                             height: 1,
                             fontWeight: FontWeight.w800,
                           ),

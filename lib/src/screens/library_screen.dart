@@ -50,7 +50,20 @@ class _LibraryScreenState extends State<LibraryScreen>
     };
   }
 
-  void _reload() => setState(() => _future = _load());
+  Future<void> _reload({bool invalidate = true}) async {
+    if (invalidate) widget.apiClient.invalidateLibraryCache();
+    setState(() => _future = _load());
+    await _future;
+  }
+
+  void _selectTab(int index) {
+    if (_tab == index) return;
+    setState(() {
+      _tab = index;
+      _genre = null;
+      _future = _load();
+    });
+  }
 
   List<Comic> _sorted(List<Comic> source) {
     final result = source
@@ -105,7 +118,7 @@ class _LibraryScreenState extends State<LibraryScreen>
           title: context.tr('Success'),
           message: context.tr('Removed from library.'),
         );
-        _reload();
+        _reload(invalidate: false);
       }
     } catch (error) {
       if (mounted) {
@@ -162,11 +175,7 @@ class _LibraryScreenState extends State<LibraryScreen>
               for (var index = 0; index < 3; index++)
                 Expanded(
                   child: InkWell(
-                    onTap: () {
-                      _tab = index;
-                      _genre = null;
-                      _reload();
-                    },
+                    onTap: () => _selectTab(index),
                     child: Container(
                       height: 48,
                       alignment: Alignment.center,
@@ -223,7 +232,7 @@ class _LibraryScreenState extends State<LibraryScreen>
             );
           }
           return RefreshIndicator(
-            onRefresh: () async => _reload(),
+            onRefresh: _reload,
             child: CustomScrollView(
               key: PageStorageKey('library-scroll-$_tab'),
               slivers: [

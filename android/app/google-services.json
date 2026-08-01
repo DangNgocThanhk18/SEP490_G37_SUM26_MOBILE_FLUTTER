@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1096631184302",
+    "project_id": "comiverse-cdb7b",
+    "storage_bucket": "comiverse-cdb7b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1096631184302:android:641a9bce8215780b57b63f",
+        "android_client_info": {
+          "package_name": "com.example.comiverse_mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA7g1Tgcq736FU4EFAhaBe95n9sOMeH1sQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

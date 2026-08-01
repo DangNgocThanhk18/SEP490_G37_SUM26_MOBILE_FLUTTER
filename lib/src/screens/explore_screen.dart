@@ -33,7 +33,10 @@ class _ExploreScreenState extends State<ExploreScreen>
     _future = widget.apiClient.getComics();
   }
 
-  void _reload() => setState(() => _future = widget.apiClient.getComics());
+  void _reload() {
+    widget.apiClient.invalidateCatalogCache();
+    setState(() => _future = widget.apiClient.getComics());
+  }
 
   List<Comic> _applyFilters(List<Comic> source) {
     final query = _query.trim().toLowerCase();

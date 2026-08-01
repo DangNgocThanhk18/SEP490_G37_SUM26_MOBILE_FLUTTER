@@ -1,0 +1,9 @@
+{
+  "FIREBASE_API_KEY": "copy-current-key-from-google-services-json",
+  "FIREBASE_PROJECT_ID": "comiverse-cdb7b",
+  "FIREBASE_MESSAGING_SENDER_ID": "1096631184302",
+  "FIREBASE_ANDROID_APP_ID": "1:1096631184302:android:641a9bce8215780b57b63f",
+  "FIREBASE_IOS_APP_ID": "1:1096631184302:ios:520bdf2bb41718f557b63f",
+  "FIREBASE_IOS_BUNDLE_ID": "com.example.comiverseMobile",
+  "FIREBASE_STORAGE_BUCKET": "comiverse-cdb7b.firebasestorage.app"
+}

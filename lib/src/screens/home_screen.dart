@@ -79,6 +79,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _refresh() async {
+    widget.apiClient.invalidateHomeCache();
     setState(() => _future = _load());
     await _future;
   }

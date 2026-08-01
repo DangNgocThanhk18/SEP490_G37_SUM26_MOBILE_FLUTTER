@@ -70,9 +70,10 @@ void main() {
 
     final homeRect = tester.getRect(find.byKey(const Key('main-nav-home')));
     final barRect = tester.getRect(find.byType(BottomAppBar));
-    expect(homeRect.height, greaterThan(60));
+    expect(homeRect.height, closeTo(58, 0.1));
     expect(homeRect.top, lessThan(barRect.top));
-    expect(barRect.height, closeTo(96, 0.1));
+    expect(barRect.top - homeRect.top, lessThan(30));
+    expect(barRect.height, closeTo(92, 0.1));
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.byIcon(Icons.person_outline_rounded));
@@ -146,6 +147,49 @@ void main() {
       const Offset(0, -1200),
     );
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('main tabs load lazily and keep their state when revisited', (
+    tester,
+  ) async {
+    final apiClient = _CountingShellApiClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: MainShell(
+          apiClient: apiClient,
+          user: _FakeApiClient.user,
+          onSignOut: () {},
+          onToggleTheme: () {},
+          isDarkMode: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(apiClient.comicsCalls, 0);
+    expect(apiClient.savedCalls, 0);
+
+    await tester.tap(find.byIcon(Icons.explore_outlined));
+    await tester.pumpAndSettle();
+    expect(apiClient.comicsCalls, 1);
+
+    await tester.tap(find.byKey(const Key('main-nav-home')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.explore_outlined));
+    await tester.pumpAndSettle();
+    expect(apiClient.comicsCalls, 1);
+
+    await tester.tap(find.byIcon(Icons.library_books_outlined));
+    await tester.pumpAndSettle();
+    expect(apiClient.savedCalls, 1);
+
+    await tester.tap(find.byKey(const Key('main-nav-home')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.library_books_outlined));
+    await tester.pumpAndSettle();
+    expect(apiClient.savedCalls, 1);
     expect(tester.takeException(), isNull);
   });
 
@@ -321,4 +365,21 @@ class _FakeApiClient extends ApiClient {
         yearlyPrice: 499000,
         benefits: ['Ad-free reading', 'Early chapter access'],
       );
+}
+
+class _CountingShellApiClient extends _FakeApiClient {
+  int comicsCalls = 0;
+  int savedCalls = 0;
+
+  @override
+  Future<List<Comic>> getComics() async {
+    comicsCalls++;
+    return _FakeApiClient.comics;
+  }
+
+  @override
+  Future<List<Comic>> getSavedComics() async {
+    savedCalls++;
+    return _FakeApiClient.comics;
+  }
 }

@@ -336,6 +336,7 @@ const Map<String, String> _vietnamese = {
   'Display name is required.': 'Vui lòng nhập tên hiển thị.',
   'Edit profile': 'Chỉnh sửa hồ sơ',
   'Forum activity': 'Hoạt động diễn đàn',
+  'Comment replies': 'Phản hồi bình luận',
   'Forum': 'Diễn đàn',
   'Community': 'Cộng đồng',
   'ComiVerse Community': 'Cộng đồng ComiVerse',
