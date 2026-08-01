@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import '../l10n/app_localizations.dart';
 import '../models/app_notification.dart';
@@ -10,6 +11,7 @@ import '../models/notification_destination.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
 import '../services/app_preferences.dart';
+import '../theme/app_theme.dart';
 import '../widgets/in_app_notification.dart';
 import 'comic_detail_screen.dart';
 import 'explore_screen.dart';
@@ -21,6 +23,8 @@ import 'notifications_screen.dart';
 import 'premium_screen.dart';
 import 'profile_screen.dart';
 import 'reader_screen.dart';
+
+enum _ShellSection { home, explore, forum, library, notifications, profile }
 
 class MainShell extends StatefulWidget {
   const MainShell({
@@ -55,8 +59,8 @@ class MainShell extends StatefulWidget {
 }
 
 class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
-  int _index = 0;
-  final Set<int> _visitedTabs = {0};
+  _ShellSection _section = _ShellSection.home;
+  final Set<_ShellSection> _visitedTabs = {_ShellSection.home};
   int _unreadCount = 0;
   int _notificationRefreshSignal = 0;
   Timer? _notificationTimer;
@@ -87,7 +91,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _startNotificationPolling();
-      _refreshNotifications(refreshList: _index == 4);
+      _refreshNotifications(
+        refreshList: _section == _ShellSection.notifications,
+      );
     } else if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached ||
@@ -123,13 +129,15 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     }
   }
 
-  void _goTo(int index) {
+  void _goTo(_ShellSection section) {
     setState(() {
-      _index = index;
-      _visitedTabs.add(index);
-      if (index == 4) _notificationRefreshSignal++;
+      _section = section;
+      _visitedTabs.add(section);
+      if (section == _ShellSection.notifications) {
+        _notificationRefreshSignal++;
+      }
     });
-    if (index == 4) _loadUnreadCount();
+    if (section == _ShellSection.notifications) _loadUnreadCount();
   }
 
   Future<void> _refreshNotifications({required bool refreshList}) async {
@@ -151,16 +159,16 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
       case NotificationDestinationType.none:
         return;
       case NotificationDestinationType.home:
-        _goTo(0);
+        _goTo(_ShellSection.home);
         return;
       case NotificationDestinationType.explore:
-        _goTo(1);
+        _goTo(_ShellSection.explore);
         return;
       case NotificationDestinationType.library:
-        _goTo(3);
+        _goTo(_ShellSection.library);
         return;
       case NotificationDestinationType.profile:
-        _goTo(5);
+        _goTo(_ShellSection.profile);
         return;
       case NotificationDestinationType.premium:
         final user = widget.user;
@@ -285,11 +293,12 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     final pages = [
       HomeScreen(
         apiClient: widget.apiClient,
-        user: widget.user,
-        onOpenExplore: () => _goTo(1),
+        onOpenExplore: () => _goTo(_ShellSection.explore),
+        onOpenNotifications: () => _goTo(_ShellSection.notifications),
+        unreadCount: _unreadCount,
       ),
       ExploreScreen(apiClient: widget.apiClient),
-      if (_visitedTabs.contains(2))
+      if (_visitedTabs.contains(_ShellSection.forum))
         ForumScreen(apiClient: widget.apiClient, onSignIn: widget.onSignOut)
       else
         const SizedBox.shrink(),
@@ -297,22 +306,25 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         apiClient: widget.apiClient,
         isGuest: !widget.apiClient.hasToken,
         onSignIn: widget.onSignOut,
-        onExplore: () => _goTo(1),
+        onExplore: () => _goTo(_ShellSection.explore),
       ),
-      NotificationsScreen(
-        apiClient: widget.apiClient,
-        isGuest: !widget.apiClient.hasToken,
-        onSignIn: widget.onSignOut,
-        onUnreadChanged: _setUnreadCount,
-        onOpenNotification: _openNotification,
-        refreshSignal: _notificationRefreshSignal,
-      ),
+      if (_visitedTabs.contains(_ShellSection.notifications))
+        NotificationsScreen(
+          apiClient: widget.apiClient,
+          isGuest: !widget.apiClient.hasToken,
+          onSignIn: widget.onSignOut,
+          onUnreadChanged: _setUnreadCount,
+          onOpenNotification: _openNotification,
+          refreshSignal: _notificationRefreshSignal,
+        )
+      else
+        const SizedBox.shrink(),
       ProfileScreen(
         apiClient: widget.apiClient,
         user: widget.user,
         isDarkMode: widget.isDarkMode,
         onToggleTheme: widget.onToggleTheme,
-        onOpenHistory: () => _goTo(3),
+        onOpenHistory: () => _goTo(_ShellSection.library),
         onSignOut: widget.onSignOut,
         locale: widget.locale,
         onLocaleChanged: widget.onLocaleChanged,
@@ -323,55 +335,260 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     ];
 
     return PopScope(
-      canPop: _index == 0,
+      canPop: _section == _ShellSection.home,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _index != 0) _goTo(0);
+        if (!didPop && _section != _ShellSection.home) {
+          _goTo(_ShellSection.home);
+        }
       },
       child: Scaffold(
-        body: IndexedStack(index: _index, children: pages),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: _index,
-          onDestinationSelected: _goTo,
-          destinations: [
-            NavigationDestination(
-              icon: const Icon(Icons.home_outlined),
-              selectedIcon: const Icon(Icons.home_rounded),
-              label: context.tr('Home'),
-            ),
-            NavigationDestination(
-              icon: const Icon(Icons.explore_outlined),
-              selectedIcon: const Icon(Icons.explore_rounded),
-              label: context.tr('Explore'),
-            ),
-            NavigationDestination(
-              icon: const Icon(Icons.forum_outlined),
-              selectedIcon: const Icon(Icons.forum_rounded),
-              label: context.tr('Forum'),
-            ),
-            NavigationDestination(
-              icon: const Icon(Icons.library_books_outlined),
-              selectedIcon: const Icon(Icons.library_books_rounded),
-              label: context.tr('Library'),
-            ),
-            NavigationDestination(
-              icon: Badge(
-                isLabelVisible: _unreadCount > 0,
-                label: Text(_unreadCount > 99 ? '99+' : '$_unreadCount'),
-                child: const Icon(Icons.notifications_outlined),
+        body: IndexedStack(index: _section.index, children: pages),
+        floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+        floatingActionButton: _HomeNavigationButton(
+          key: const Key('main-nav-home'),
+          label: context.tr('Home'),
+          selected:
+              _section == _ShellSection.home ||
+              _section == _ShellSection.notifications,
+          onPressed: () => _goTo(_ShellSection.home),
+        ),
+        bottomNavigationBar: _ComiVerseBottomBar(
+          selectedSection: _section,
+          onSelected: _goTo,
+        ),
+      ),
+    );
+  }
+}
+
+class _ComiVerseBottomBar extends StatelessWidget {
+  const _ComiVerseBottomBar({
+    required this.selectedSection,
+    required this.onSelected,
+  });
+
+  final _ShellSection selectedSection;
+  final ValueChanged<_ShellSection> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return BottomAppBar(
+      height: 72,
+      padding: EdgeInsets.zero,
+      color: theme.navigationBarTheme.backgroundColor ?? scheme.surface,
+      surfaceTintColor: Colors.transparent,
+      shadowColor: scheme.shadow.withValues(alpha: 0.24),
+      elevation: 12,
+      shape: const CircularNotchedRectangle(),
+      notchMargin: 8,
+      child: Row(
+        children: [
+          _BottomNavigationItem(
+            key: const Key('main-nav-explore'),
+            sortOrder: 1,
+            label: context.tr('Explore'),
+            icon: Icons.explore_outlined,
+            selectedIcon: Icons.explore_rounded,
+            selected: selectedSection == _ShellSection.explore,
+            onPressed: () => onSelected(_ShellSection.explore),
+          ),
+          _BottomNavigationItem(
+            key: const Key('main-nav-forum'),
+            sortOrder: 2,
+            label: context.tr('Forum'),
+            icon: Icons.forum_outlined,
+            selectedIcon: Icons.forum_rounded,
+            selected: selectedSection == _ShellSection.forum,
+            onPressed: () => onSelected(_ShellSection.forum),
+          ),
+          const SizedBox(width: 80),
+          _BottomNavigationItem(
+            key: const Key('main-nav-library'),
+            sortOrder: 4,
+            label: context.tr('Library'),
+            icon: Icons.library_books_outlined,
+            selectedIcon: Icons.library_books_rounded,
+            selected: selectedSection == _ShellSection.library,
+            onPressed: () => onSelected(_ShellSection.library),
+          ),
+          _BottomNavigationItem(
+            key: const Key('main-nav-profile'),
+            sortOrder: 5,
+            label: context.tr('Profile'),
+            icon: Icons.person_outline_rounded,
+            selectedIcon: Icons.person_rounded,
+            selected: selectedSection == _ShellSection.profile,
+            onPressed: () => onSelected(_ShellSection.profile),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BottomNavigationItem extends StatelessWidget {
+  const _BottomNavigationItem({
+    super.key,
+    required this.sortOrder,
+    required this.label,
+    required this.icon,
+    required this.selectedIcon,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final double sortOrder;
+  final String label;
+  final IconData icon;
+  final IconData selectedIcon;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final states = selected ? {WidgetState.selected} : <WidgetState>{};
+    final labelStyle =
+        theme.navigationBarTheme.labelTextStyle?.resolve(states) ??
+        TextStyle(
+          color: selected ? scheme.primary : scheme.onSurfaceVariant,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+        );
+    final color = selected ? scheme.primary : scheme.onSurfaceVariant;
+
+    return Expanded(
+      child: Semantics(
+        sortKey: OrdinalSortKey(sortOrder),
+        button: true,
+        selected: selected,
+        label: label,
+        child: Tooltip(
+          message: label,
+          child: InkWell(
+            onTap: onPressed,
+            borderRadius: BorderRadius.circular(18),
+            child: ExcludeSemantics(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      width: 38,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? scheme.primaryContainer.withValues(alpha: 0.55)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                      child: Icon(
+                        selected ? selectedIcon : icon,
+                        color: color,
+                        size: 23,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: labelStyle,
+                    ),
+                  ],
+                ),
               ),
-              selectedIcon: Badge(
-                isLabelVisible: _unreadCount > 0,
-                label: Text(_unreadCount > 99 ? '99+' : '$_unreadCount'),
-                child: const Icon(Icons.notifications_rounded),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeNavigationButton extends StatelessWidget {
+  const _HomeNavigationButton({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Semantics(
+      sortKey: OrdinalSortKey(3),
+      button: true,
+      selected: selected,
+      label: label,
+      child: Tooltip(
+        message: label,
+        child: AnimatedScale(
+          scale: selected ? 1.05 : 1,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          child: SizedBox.square(
+            dimension: 68,
+            child: Material(
+              color: Colors.transparent,
+              elevation: selected ? 11 : 8,
+              shadowColor: context.cvColors.brandPink.withValues(alpha: 0.45),
+              shape: const CircleBorder(),
+              clipBehavior: Clip.antiAlias,
+              child: Ink(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [AppTheme.brandPurple, context.cvColors.brandPink],
+                  ),
+                  border: Border.all(color: scheme.surface, width: 3),
+                ),
+                child: InkWell(
+                  onTap: onPressed,
+                  customBorder: const CircleBorder(),
+                  child: ExcludeSemantics(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          selected ? Icons.home_rounded : Icons.home_outlined,
+                          color: scheme.onPrimary,
+                          size: 29,
+                        ),
+                        const SizedBox(height: 1),
+                        Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: scheme.onPrimary,
+                            fontSize: 9,
+                            height: 1,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
-              label: context.tr('Alerts'),
             ),
-            NavigationDestination(
-              icon: const Icon(Icons.person_outline_rounded),
-              selectedIcon: const Icon(Icons.person_rounded),
-              label: context.tr('Profile'),
-            ),
-          ],
+          ),
         ),
       ),
     );

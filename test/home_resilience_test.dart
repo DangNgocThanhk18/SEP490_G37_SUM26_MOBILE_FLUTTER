@@ -15,8 +15,9 @@ void main() {
         theme: AppTheme.light(),
         home: HomeScreen(
           apiClient: _PartiallyFailingApiClient(),
-          user: null,
           onOpenExplore: () {},
+          onOpenNotifications: () {},
+          unreadCount: 0,
         ),
       ),
     );

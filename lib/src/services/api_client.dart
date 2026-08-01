@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 import '../models/chapter.dart';
 import '../models/comic.dart';
@@ -36,6 +36,9 @@ class LoginResult {
 }
 
 class ApiClient {
+  static const deployedBaseUrl =
+      'https://sep490g37sum26java-production.up.railway.app/api';
+
   ApiClient({
     String? baseUrl,
     Duration timeout = const Duration(seconds: 20),
@@ -55,10 +58,8 @@ class ApiClient {
       resolved = provided!;
     } else if (fromEnvironment.isNotEmpty) {
       resolved = fromEnvironment;
-    } else if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      resolved = 'http://10.0.2.2:8081/api';
     } else {
-      resolved = 'http://localhost:8081/api';
+      resolved = deployedBaseUrl;
     }
     return resolved.endsWith('/')
         ? resolved.substring(0, resolved.length - 1)
@@ -211,6 +212,73 @@ class ApiClient {
     _currentUser = user;
     await _sessionStorage.write(_profileKey, jsonEncode(user.toJson()));
     return user;
+  }
+
+  Future<String> uploadImage({
+    required List<int> bytes,
+    required String fileName,
+    required String contentType,
+  }) async {
+    if (bytes.isEmpty) {
+      throw const ApiException('Selected image is empty.');
+    }
+
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/upload/image'),
+    );
+    request.headers['Accept'] = 'application/json';
+    request.headers['Accept-Language'] = _languageCode;
+    if (hasToken) {
+      request.headers['Authorization'] = 'Bearer $_token';
+    }
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: fileName,
+        contentType: MediaType.parse(contentType),
+      ),
+    );
+
+    const minimumUploadTimeout = Duration(seconds: 60);
+    final uploadTimeout = _timeout > minimumUploadTimeout
+        ? _timeout
+        : minimumUploadTimeout;
+    try {
+      final streamedResponse = await _httpClient
+          .send(request)
+          .timeout(uploadTimeout);
+      final response = await http.Response.fromStream(
+        streamedResponse,
+      ).timeout(uploadTimeout);
+      final text = utf8.decode(response.bodyBytes);
+      final decoded = text.trim().isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(text);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final message = decoded is Map<String, dynamic>
+            ? (decoded['message'] ?? decoded['error'] ?? 'Image upload failed')
+                  .toString()
+            : 'Image upload failed';
+        throw ApiException(message);
+      }
+
+      if (decoded is Map<String, dynamic>) {
+        final data = _unwrapData(decoded);
+        if (data is String && data.trim().isNotEmpty) return data.trim();
+      }
+      throw const ApiException('Cannot read uploaded image response.');
+    } on http.ClientException {
+      throw ApiException(
+        'Cannot connect to backend. Check that Spring Boot is running at $baseUrl.',
+      );
+    } on TimeoutException {
+      throw ApiException('Request timed out while connecting to $baseUrl.');
+    } on FormatException {
+      throw const ApiException('Backend returned invalid JSON.');
+    }
   }
 
   Future<List<Comic>> getComics() async {

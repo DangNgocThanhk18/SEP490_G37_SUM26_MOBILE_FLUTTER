@@ -4,19 +4,33 @@ Android-first Flutter reader application for ComiVerse.
 
 ## Backend URL
 
-The backend address is configured at build/run time with `API_BASE_URL`. Do not
-commit a developer machine's LAN IP to the source code.
+The app uses the deployed Railway backend by default:
 
-### Android Emulator
+```text
+https://sep490g37sum26java-production.up.railway.app/api
+```
 
-The default URL is already configured for the Android Studio emulator:
+Therefore, this is enough for Android devices and emulators as long as they
+have an internet connection:
 
 ```powershell
 flutter run
 ```
 
-It resolves to `http://10.0.2.2:8081/api`. On an Android emulator,
-`10.0.2.2` points to the computer running Spring Boot.
+Spring Boot does not need to be running locally. `API_BASE_URL` remains
+available as a build-time override for local development or another deployed
+environment. Do not commit a developer machine's LAN IP to the source code.
+
+### Android Emulator
+
+To deliberately use a Spring Boot instance running on the development
+computer instead of Railway:
+
+```powershell
+flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8081/api
+```
+
+On an Android emulator, `10.0.2.2` points to the computer running Spring Boot.
 
 ### Physical Android Device
 
@@ -33,26 +47,33 @@ development computer.
 
 ### Flutter Web
 
-Run Flutter Web on the origin allowed by the local Spring Boot configuration:
+The Railway backend currently allows the local web origin on port `5173`.
+Run Flutter Web on that port:
+
+```powershell
+flutter run -d chrome --web-port=5173
+```
+
+To use local Spring Boot with Flutter Web, add the override:
 
 ```powershell
 flutter run -d chrome --web-port=5173 --dart-define=API_BASE_URL=http://localhost:8081/api
 ```
 
-For a deployed web app, set the backend environment variable
-`CORS_ALLOWED_ORIGINS` to the web app origin. Separate multiple origins with
-commas.
-
 ### Deployed Backend
 
-Use the public HTTPS API URL for a cloud build:
+Release builds also use Railway by default:
 
 ```powershell
-flutter run --dart-define=API_BASE_URL=https://api.comiverse.example/api
-flutter build apk --release --dart-define=API_BASE_URL=https://api.comiverse.example/api
+flutter build apk --release
 ```
 
-Each developer can use their own URL without changing tracked Dart files.
+For another deployment, override it without changing tracked Dart files:
+
+```powershell
+flutter run --dart-define=API_BASE_URL=https://another-host.example/api
+flutter build apk --release --dart-define=API_BASE_URL=https://another-host.example/api
+```
 
 ## Verification
 

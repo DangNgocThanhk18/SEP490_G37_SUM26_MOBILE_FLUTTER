@@ -34,6 +34,7 @@ void main() {
         home: MediaQuery(
           data: const MediaQueryData(
             size: Size(320, 700),
+            padding: EdgeInsets.only(bottom: 24),
             textScaler: TextScaler.linear(1.3),
           ),
           child: MainShell(
@@ -52,6 +53,26 @@ void main() {
 
     expect(find.text('Trang chủ'), findsOneWidget);
     expect(find.text('Khám phá'), findsOneWidget);
+    final homeAppBar = find.byType(AppBar).first;
+    expect(
+      find.descendant(of: homeAppBar, matching: find.byType(CircleAvatar)),
+      findsNothing,
+    );
+    expect(find.byIcon(Icons.search_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.notifications_outlined), findsOneWidget);
+    expect(find.byKey(const Key('main-nav-explore')), findsOneWidget);
+    expect(find.byKey(const Key('main-nav-forum')), findsOneWidget);
+    expect(find.byKey(const Key('main-nav-home')), findsOneWidget);
+    expect(find.byKey(const Key('main-nav-library')), findsOneWidget);
+    expect(find.byKey(const Key('main-nav-profile')), findsOneWidget);
+    expect(find.byType(NavigationBar), findsNothing);
+    expect(find.byType(BottomAppBar), findsOneWidget);
+
+    final homeRect = tester.getRect(find.byKey(const Key('main-nav-home')));
+    final barRect = tester.getRect(find.byType(BottomAppBar));
+    expect(homeRect.height, greaterThan(60));
+    expect(homeRect.top, lessThan(barRect.top));
+    expect(barRect.height, closeTo(96, 0.1));
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.byIcon(Icons.person_outline_rounded));
@@ -106,6 +127,10 @@ void main() {
       find.byKey(const PageStorageKey('library-scroll-0')),
       const Offset(0, -900),
     );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const Key('main-nav-home')));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 

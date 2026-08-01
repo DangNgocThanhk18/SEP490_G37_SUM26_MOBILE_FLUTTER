@@ -17,10 +17,12 @@ void main() {
       );
     });
 
-    test('uses a portable local default when no URL is provided', () {
+    test('uses the deployed Railway API when no URL is provided', () {
       final uri = Uri.parse(ApiClient.resolveBaseUrl());
 
-      expect(uri.host, anyOf('localhost', '10.0.2.2'));
+      expect(ApiClient.resolveBaseUrl(), ApiClient.deployedBaseUrl);
+      expect(uri.scheme, 'https');
+      expect(uri.host, 'sep490g37sum26java-production.up.railway.app');
       expect(uri.path, '/api');
     });
   });

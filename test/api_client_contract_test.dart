@@ -97,6 +97,40 @@ void main() {
       expect(await storage.read('comiverse_user_profile'), isNotNull);
     },
   );
+
+  test('uploads profile images with the Spring multipart contract', () async {
+    http.Request? captured;
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8081/api',
+      httpClient: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({
+            'success': true,
+            'data': 'https://res.cloudinary.com/comiverse/avatar.png',
+          }),
+          200,
+        );
+      }),
+    );
+
+    final url = await client.uploadImage(
+      bytes: const [1, 2, 3, 4],
+      fileName: 'avatar.png',
+      contentType: 'image/png',
+    );
+
+    expect(url, 'https://res.cloudinary.com/comiverse/avatar.png');
+    expect(captured?.method, 'POST');
+    expect(captured?.url.path, '/api/upload/image');
+    expect(
+      captured?.headers['content-type'],
+      startsWith('multipart/form-data; boundary='),
+    );
+    expect(captured?.body, contains('name="file"'));
+    expect(captured?.body, contains('filename="avatar.png"'));
+    expect(captured?.body.toLowerCase(), contains('content-type: image/png'));
+  });
 }
 
 class _MemorySessionStorage implements SessionStorage {

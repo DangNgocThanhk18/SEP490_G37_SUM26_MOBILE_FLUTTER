@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../l10n/app_localizations.dart';
 import '../models/comic.dart';
-import '../models/user_profile.dart';
 import '../services/api_client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
@@ -14,13 +13,15 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.apiClient,
-    required this.user,
     required this.onOpenExplore,
+    required this.onOpenNotifications,
+    required this.unreadCount,
   });
 
   final ApiClient apiClient;
-  final UserProfile? user;
   final VoidCallback onOpenExplore;
+  final VoidCallback onOpenNotifications;
+  final int unreadCount;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -111,13 +112,17 @@ class _HomeScreenState extends State<HomeScreen>
             icon: const Icon(Icons.search_rounded),
           ),
           Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: CircleAvatar(
-              radius: 17,
-              backgroundImage: _avatarProvider(widget.user?.avatarUrl),
-              child: _avatarProvider(widget.user?.avatarUrl) == null
-                  ? Text((widget.user?.displayName ?? 'G')[0].toUpperCase())
-                  : null,
+            padding: const EdgeInsets.only(right: 8),
+            child: IconButton(
+              tooltip: context.tr('Notifications'),
+              onPressed: widget.onOpenNotifications,
+              icon: Badge(
+                isLabelVisible: widget.unreadCount > 0,
+                label: Text(
+                  widget.unreadCount > 99 ? '99+' : '${widget.unreadCount}',
+                ),
+                child: const Icon(Icons.notifications_outlined),
+              ),
             ),
           ),
         ],
@@ -345,11 +350,6 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
     );
-  }
-
-  ImageProvider<Object>? _avatarProvider(String? url) {
-    if (url == null || url.trim().isEmpty) return null;
-    return NetworkImage(url);
   }
 }
 
