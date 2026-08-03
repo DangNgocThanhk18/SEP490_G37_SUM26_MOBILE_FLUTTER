@@ -42,6 +42,8 @@ class MainShell extends StatefulWidget {
     this.onUserChanged,
     this.preferences,
     this.pushNotifications,
+    this.screenCaptureProtectionEnabled = true,
+    this.onScreenCaptureProtectionChanged,
   });
 
   final ApiClient apiClient;
@@ -56,6 +58,8 @@ class MainShell extends StatefulWidget {
   final ValueChanged<UserProfile>? onUserChanged;
   final AppPreferences? preferences;
   final PushNotificationCoordinator? pushNotifications;
+  final bool screenCaptureProtectionEnabled;
+  final ValueChanged<bool>? onScreenCaptureProtectionChanged;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -420,6 +424,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           themeMode: widget.themeMode,
           onThemeModeChanged: widget.onThemeModeChanged,
           onUserChanged: widget.onUserChanged,
+          screenCaptureProtectionEnabled: widget.screenCaptureProtectionEnabled,
+          onScreenCaptureProtectionChanged:
+              widget.onScreenCaptureProtectionChanged,
         )
       else
         const SizedBox.shrink(),

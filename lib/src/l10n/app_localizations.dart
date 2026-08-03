@@ -84,6 +84,8 @@ const Map<String, String> _vietnamese = {
   'All': 'Tất cả',
   'Alerts': 'Thông báo',
   'App Settings': 'Cài đặt ứng dụng',
+  'Screen capture protection': 'Bảo vệ chụp màn hình',
+  'Presentation build setting': 'Tùy chọn dành cho bản trình chiếu',
   'Apply filters': 'Áp dụng bộ lọc',
   'Author': 'Tác giả',
   'Back': 'Quay lại',

@@ -6,6 +6,7 @@ import 'package:comiverse_mobile/src/models/user_profile.dart';
 import 'package:comiverse_mobile/src/screens/profile_screen.dart';
 import 'package:comiverse_mobile/src/services/api_client.dart';
 import 'package:comiverse_mobile/src/services/profile_image_picker.dart';
+import 'package:comiverse_mobile/src/services/screen_capture_protection.dart';
 import 'package:comiverse_mobile/src/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -100,6 +101,62 @@ void main() {
 
     expect(apiClient.savedPreferences?['SYSTEM_BROADCASTS'], isFalse);
     expect(find.text('Notification preferences saved.'), findsOneWidget);
+  });
+
+  testWidgets('demo profile exposes the screen capture protection switch', (
+    tester,
+  ) async {
+    bool? changedValue;
+    await tester.pumpWidget(
+      _testApp(
+        ProfileScreen(
+          apiClient: _ProfileApiClient(),
+          user: _ProfileApiClient.user,
+          isDarkMode: false,
+          onToggleTheme: () {},
+          onOpenHistory: () {},
+          onSignOut: () {},
+          screenCaptureProtectionEnabled: true,
+          onScreenCaptureProtectionChanged: (value) => changedValue = value,
+        ),
+      ),
+    );
+
+    expect(ScreenCaptureProtection.canUserConfigure, isTrue);
+    final list = find.byKey(const PageStorageKey('profile-scroll'));
+    await tester.drag(list, const Offset(0, -500));
+    await tester.pumpAndSettle();
+    final toggle = find.byKey(const Key('screen-capture-protection-switch'));
+    await tester.ensureVisible(toggle);
+
+    expect(find.text('Screen capture protection'), findsOneWidget);
+    expect(tester.widget<Switch>(toggle).value, isTrue);
+    await tester.tap(toggle);
+    await tester.pump();
+
+    expect(changedValue, isFalse);
+  });
+
+  testWidgets('profile hides screen capture control without demo callback', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _testApp(
+        ProfileScreen(
+          apiClient: _ProfileApiClient(),
+          user: _ProfileApiClient.user,
+          isDarkMode: false,
+          onToggleTheme: () {},
+          onOpenHistory: () {},
+          onSignOut: () {},
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const Key('screen-capture-protection-switch')),
+      findsNothing,
+    );
   });
 
   testWidgets('profile image editor has no overflow at 320dp', (tester) async {

@@ -91,4 +91,59 @@ void main() {
     await ScreenCaptureProtection.release();
     expect(calls.last.arguments, isFalse);
   });
+
+  test('disabled demo override keeps an active reader capturable', () async {
+    final calls = <MethodCall>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          return null;
+        });
+
+    await ScreenCaptureProtection.setUserProtectionEnabled(false);
+    calls.clear();
+    await ScreenCaptureProtection.acquire();
+
+    expect(ScreenCaptureProtection.isProtectionEnabled, isFalse);
+    expect(calls.where((call) => call.arguments == true), isEmpty);
+
+    await ScreenCaptureProtection.release();
+  });
+
+  test(
+    'changing the demo override outside Reader skips native calls',
+    () async {
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call);
+            return null;
+          });
+
+      await ScreenCaptureProtection.setUserProtectionEnabled(false);
+      await ScreenCaptureProtection.setUserProtectionEnabled(true);
+
+      expect(calls, isEmpty);
+    },
+  );
+
+  test(
+    'changing demo override reconciles an active reader immediately',
+    () async {
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call);
+            return null;
+          });
+
+      await ScreenCaptureProtection.acquire();
+      await ScreenCaptureProtection.setUserProtectionEnabled(false);
+      await ScreenCaptureProtection.setUserProtectionEnabled(true);
+
+      expect(calls.map((call) => call.arguments), <Object?>[true, false, true]);
+
+      await ScreenCaptureProtection.release();
+    },
+  );
 }

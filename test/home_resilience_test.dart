@@ -37,6 +37,29 @@ void main() {
     expect(find.text('New Updates'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'uses public fallback without warning when personalized sections fail',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light(),
+          home: HomeScreen(
+            apiClient: _PersonalizationFailingApiClient(),
+            onOpenExplore: () {},
+            onOpenNotifications: () {},
+            unreadCount: 0,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Some sections could not be loaded.'), findsNothing);
+      expect(find.text('Recommended for You'), findsOneWidget);
+      expect(find.text('Public fallback'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 class _PartiallyFailingApiClient extends ApiClient {
@@ -63,4 +86,36 @@ class _PartiallyFailingApiClient extends ApiClient {
   Future<List<Comic>> getRecentlyUpdated({int size = 10}) async => const [
     comic,
   ];
+}
+
+class _PersonalizationFailingApiClient extends ApiClient {
+  _PersonalizationFailingApiClient() : super(baseUrl: 'http://localhost/api');
+
+  static const comic = Comic(
+    id: 'comic-public',
+    title: 'Public fallback',
+    latestChapterNumber: '8',
+    genres: ['Adventure'],
+  );
+
+  @override
+  bool get hasToken => true;
+
+  @override
+  Future<List<Comic>> getTopViewed({int size = 10}) async => const [comic];
+
+  @override
+  Future<List<Comic>> getRecentlyUpdated({int size = 10}) async => const [
+    comic,
+  ];
+
+  @override
+  Future<List<Comic>> getRecommendations({int size = 10}) async {
+    throw const ApiException('Recommendations are temporarily unavailable.');
+  }
+
+  @override
+  Future<List<Comic>> getReadingHistory() async {
+    throw const ApiException('Reading history is temporarily unavailable.');
+  }
 }

@@ -17,13 +17,21 @@ abstract interface class AppPreferences {
   Future<void> writePreferredReadingLanguage(String? languageCode);
 }
 
-class SecureAppPreferences implements AppPreferences {
+abstract interface class ScreenCapturePreferences {
+  Future<bool?> readScreenCaptureProtectionEnabled();
+
+  Future<void> writeScreenCaptureProtectionEnabled(bool enabled);
+}
+
+class SecureAppPreferences implements AppPreferences, ScreenCapturePreferences {
   const SecureAppPreferences({FlutterSecureStorage? storage})
     : _storage = storage ?? const FlutterSecureStorage();
 
   static const _languageKey = 'comiverse_language';
   static const _themeModeKey = 'comiverse_theme_mode';
   static const _preferredReadingLangKey = 'comiverse_reading_language';
+  static const _screenCaptureProtectionKey =
+      'comiverse_screen_capture_protection';
 
   final FlutterSecureStorage _storage;
 
@@ -53,4 +61,17 @@ class SecureAppPreferences implements AppPreferences {
       await _storage.write(key: _preferredReadingLangKey, value: languageCode);
     }
   }
+
+  @override
+  Future<bool?> readScreenCaptureProtectionEnabled() async {
+    return switch (await _storage.read(key: _screenCaptureProtectionKey)) {
+      'true' => true,
+      'false' => false,
+      _ => null,
+    };
+  }
+
+  @override
+  Future<void> writeScreenCaptureProtectionEnabled(bool enabled) => _storage
+      .write(key: _screenCaptureProtectionKey, value: enabled.toString());
 }

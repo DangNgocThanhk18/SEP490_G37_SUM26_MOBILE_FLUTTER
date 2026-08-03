@@ -2,13 +2,22 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 abstract final class ScreenCaptureProtection {
+  static const bool canUserConfigure = bool.fromEnvironment(
+    'COMIVERSE_DEMO_CAPTURE_CONTROL',
+    defaultValue: !kReleaseMode,
+  );
+
   static const MethodChannel _channel = MethodChannel(
     'comiverse/screen_capture_protection',
   );
 
   static int _activeReaders = 0;
+  static bool _userProtectionEnabled = true;
   static bool? _nativeProtectionEnabled;
   static Future<void> _reconcileQueue = Future<void>.value();
+
+  static bool get isProtectionEnabled =>
+      !canUserConfigure || _userProtectionEnabled;
 
   static Future<void> acquire() {
     _activeReaders++;
@@ -18,6 +27,14 @@ abstract final class ScreenCaptureProtection {
   static Future<void> release() {
     if (_activeReaders == 0) return Future<void>.value();
     _activeReaders--;
+    return _enqueueReconcile();
+  }
+
+  static Future<void> setUserProtectionEnabled(bool enabled) {
+    _userProtectionEnabled = canUserConfigure ? enabled : true;
+    if (_activeReaders == 0 && _nativeProtectionEnabled != true) {
+      return Future<void>.value();
+    }
     return _enqueueReconcile();
   }
 
@@ -44,12 +61,12 @@ abstract final class ScreenCaptureProtection {
 
   static Future<void> _reconcileNativeState() async {
     while (true) {
-      final shouldProtect = _activeReaders > 0;
+      final shouldProtect = _activeReaders > 0 && isProtectionEnabled;
       if (_nativeProtectionEnabled == shouldProtect) return;
       final didApply = await _setProtected(shouldProtect);
       if (!didApply) return;
       _nativeProtectionEnabled = shouldProtect;
-      if (shouldProtect == (_activeReaders > 0)) return;
+      if (shouldProtect == (_activeReaders > 0 && isProtectionEnabled)) return;
     }
   }
 
@@ -74,6 +91,7 @@ abstract final class ScreenCaptureProtection {
   @visibleForTesting
   static Future<void> resetForTesting() async {
     _activeReaders = 0;
+    _userProtectionEnabled = true;
     await _reconcileQueue;
     if (_hasNativeProtection) {
       final didApply = await _setProtected(false);

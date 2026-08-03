@@ -10,6 +10,7 @@ import 'screens/main_shell.dart';
 import 'services/api_client.dart';
 import 'services/app_preferences.dart';
 import 'services/push_notifications.dart';
+import 'services/screen_capture_protection.dart';
 import 'theme/app_theme.dart';
 import 'widgets/comiverse_logo.dart';
 
@@ -39,6 +40,7 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
   bool _isRestoringSession = true;
   ThemeMode _themeMode = ThemeMode.system;
   Locale _locale = const Locale('en');
+  bool _screenCaptureProtectionEnabled = true;
 
   @override
   void initState() {
@@ -55,9 +57,14 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
     final userFuture = _apiClient.restoreSession();
     final languageFuture = _readLanguageCode();
     final themeFuture = _readThemeMode();
+    final screenCaptureFuture = _readScreenCaptureProtectionEnabled();
     final user = await userFuture;
     final languageCode = await languageFuture;
     final themeMode = await themeFuture;
+    final screenCaptureProtectionEnabled = await screenCaptureFuture;
+    await ScreenCaptureProtection.setUserProtectionEnabled(
+      screenCaptureProtectionEnabled,
+    );
     if (!mounted) return;
     setState(() {
       _user = user;
@@ -66,6 +73,7 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
         _apiClient.setLanguage(languageCode);
       }
       if (themeMode != null) _themeMode = themeMode;
+      _screenCaptureProtectionEnabled = screenCaptureProtectionEnabled;
       _isRestoringSession = false;
     });
     if (_apiClient.hasToken) {
@@ -93,6 +101,20 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
       };
     } catch (_) {
       return null;
+    }
+  }
+
+  Future<bool> _readScreenCaptureProtectionEnabled() async {
+    if (!ScreenCaptureProtection.canUserConfigure) return true;
+    final preferences = _preferences;
+    if (preferences is! ScreenCapturePreferences) return true;
+    final screenCapturePreferences = preferences as ScreenCapturePreferences;
+    try {
+      return await screenCapturePreferences
+              .readScreenCaptureProtectionEnabled() ??
+          true;
+    } catch (_) {
+      return true;
     }
   }
 
@@ -132,6 +154,29 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
       await _preferences.writeThemeMode(themeMode.name);
     } catch (_) {
       // A storage failure must not prevent an immediate theme change.
+    }
+  }
+
+  void _changeScreenCaptureProtection(bool enabled) {
+    if (!ScreenCaptureProtection.canUserConfigure ||
+        _screenCaptureProtectionEnabled == enabled) {
+      return;
+    }
+    setState(() => _screenCaptureProtectionEnabled = enabled);
+    unawaited(_applyScreenCaptureProtection(enabled));
+  }
+
+  Future<void> _applyScreenCaptureProtection(bool enabled) async {
+    await ScreenCaptureProtection.setUserProtectionEnabled(enabled);
+    final preferences = _preferences;
+    if (preferences is! ScreenCapturePreferences) return;
+    final screenCapturePreferences = preferences as ScreenCapturePreferences;
+    try {
+      await screenCapturePreferences.writeScreenCaptureProtectionEnabled(
+        enabled,
+      );
+    } catch (_) {
+      // A storage failure must not block the presentation override in memory.
     }
   }
 
@@ -208,6 +253,11 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
               onUserChanged: _handleUserChanged,
               preferences: _preferences,
               pushNotifications: _pushNotifications,
+              screenCaptureProtectionEnabled: _screenCaptureProtectionEnabled,
+              onScreenCaptureProtectionChanged:
+                  ScreenCaptureProtection.canUserConfigure
+                  ? _changeScreenCaptureProtection
+                  : null,
             )
           : LoginScreen(
               apiClient: _apiClient,

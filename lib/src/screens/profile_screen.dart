@@ -5,6 +5,7 @@ import '../models/notification_preferences.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
 import '../services/profile_image_picker.dart';
+import '../services/screen_capture_protection.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/in_app_notification.dart';
@@ -26,6 +27,8 @@ class ProfileScreen extends StatelessWidget {
     this.onLocaleChanged,
     this.onUserChanged,
     this.imagePicker = const DeviceProfileImagePicker(),
+    this.screenCaptureProtectionEnabled = true,
+    this.onScreenCaptureProtectionChanged,
   });
 
   final ApiClient apiClient;
@@ -40,6 +43,8 @@ class ProfileScreen extends StatelessWidget {
   final ValueChanged<Locale>? onLocaleChanged;
   final ValueChanged<UserProfile>? onUserChanged;
   final ProfileImagePicker imagePicker;
+  final bool screenCaptureProtectionEnabled;
+  final ValueChanged<bool>? onScreenCaptureProtectionChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -174,6 +179,21 @@ class ProfileScreen extends StatelessWidget {
                 title: context.tr('Notification Preferences'),
                 onTap: () => _showNotificationPreferences(context),
               ),
+              if (ScreenCaptureProtection.canUserConfigure &&
+                  onScreenCaptureProtectionChanged != null)
+                _SettingsTile(
+                  icon: Icons.phonelink_lock_outlined,
+                  title: context.tr('Screen capture protection'),
+                  subtitle: context.tr('Presentation build setting'),
+                  trailing: Switch.adaptive(
+                    key: const Key('screen-capture-protection-switch'),
+                    value: screenCaptureProtectionEnabled,
+                    onChanged: onScreenCaptureProtectionChanged,
+                  ),
+                  onTap: () => onScreenCaptureProtectionChanged!(
+                    !screenCaptureProtectionEnabled,
+                  ),
+                ),
               _SettingsTile(
                 icon: Icons.download_outlined,
                 title: context.tr('Downloads'),
@@ -1346,6 +1366,7 @@ class _SettingsTile extends StatelessWidget {
     required this.title,
     this.subtitle,
     this.value,
+    this.trailing,
     this.onTap,
   });
 
@@ -1353,6 +1374,7 @@ class _SettingsTile extends StatelessWidget {
   final String title;
   final String? subtitle;
   final String? value;
+  final Widget? trailing;
   final VoidCallback? onTap;
 
   @override
@@ -1362,24 +1384,26 @@ class _SettingsTile extends StatelessWidget {
       leading: Icon(icon),
       title: Text(title),
       subtitle: subtitle == null ? null : Text(subtitle!),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (value != null)
-            Text(
-              value!,
-              style: TextStyle(
-                color: onTap == null
-                    ? Theme.of(context).colorScheme.outline
-                    : null,
-              ),
-            ),
-          if (onTap != null) ...[
-            const SizedBox(width: 4),
-            const Icon(Icons.chevron_right_rounded, size: 18),
-          ],
-        ],
-      ),
+      trailing:
+          trailing ??
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (value != null)
+                Text(
+                  value!,
+                  style: TextStyle(
+                    color: onTap == null
+                        ? Theme.of(context).colorScheme.outline
+                        : null,
+                  ),
+                ),
+              if (onTap != null) ...[
+                const SizedBox(width: 4),
+                const Icon(Icons.chevron_right_rounded, size: 18),
+              ],
+            ],
+          ),
       onTap: onTap,
     );
   }

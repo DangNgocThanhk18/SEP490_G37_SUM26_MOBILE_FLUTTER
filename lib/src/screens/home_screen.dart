@@ -66,7 +66,10 @@ class _HomeScreenState extends State<HomeScreen>
       recommended: recommendations,
       updated: updated,
       history: results[3].comics,
-      hasPartialFailure: results.any((section) => section.error != null),
+      // Recommendations already fall back to a public feed, while reading
+      // history is optional. Only surface a warning when a catalog section
+      // that is actually shown on Home failed to load.
+      hasPartialFailure: results[0].error != null || results[2].error != null,
     );
   }
 

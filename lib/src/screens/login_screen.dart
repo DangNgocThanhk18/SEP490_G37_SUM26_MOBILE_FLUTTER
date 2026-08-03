@@ -205,15 +205,6 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         child: Text(context.tr('Continue as Guest')),
                       ),
-                      const SizedBox(height: 24),
-                      Text(
-                        'API: ${widget.apiClient.baseUrl}',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          fontSize: 12,
-                        ),
-                      ),
                     ],
                   ),
                 ),

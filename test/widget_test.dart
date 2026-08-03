@@ -18,6 +18,8 @@ void main() {
 
     expect(find.text('Welcome back'), findsOneWidget);
     expect(find.text('Sign In'), findsOneWidget);
+    expect(find.textContaining('API:'), findsNothing);
+    expect(find.textContaining('localhost/api'), findsNothing);
   });
 
   testWidgets('switches between dark and light themes', (
