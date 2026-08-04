@@ -4,12 +4,14 @@ import '../l10n/app_localizations.dart';
 import '../models/notification_preferences.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
+import '../services/offline_download_service.dart';
 import '../services/profile_image_picker.dart';
 import '../services/screen_capture_protection.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/in_app_notification.dart';
 import 'premium_screen.dart';
+import 'downloads_screen.dart';
 import 'support_legal_screens.dart';
 
 class ProfileScreen extends StatelessWidget {
@@ -29,6 +31,7 @@ class ProfileScreen extends StatelessWidget {
     this.imagePicker = const DeviceProfileImagePicker(),
     this.screenCaptureProtectionEnabled = true,
     this.onScreenCaptureProtectionChanged,
+    this.offlineDownloads,
   });
 
   final ApiClient apiClient;
@@ -45,6 +48,7 @@ class ProfileScreen extends StatelessWidget {
   final ProfileImagePicker imagePicker;
   final bool screenCaptureProtectionEnabled;
   final ValueChanged<bool>? onScreenCaptureProtectionChanged;
+  final OfflineDownloadService? offlineDownloads;
 
   @override
   Widget build(BuildContext context) {
@@ -194,11 +198,20 @@ class ProfileScreen extends StatelessWidget {
                     !screenCaptureProtectionEnabled,
                   ),
                 ),
-              _SettingsTile(
-                icon: Icons.download_outlined,
-                title: context.tr('Downloads'),
-                value: context.tr('Coming soon'),
-              ),
+              if (offlineDownloads != null)
+                _SettingsTile(
+                  icon: Icons.download_outlined,
+                  title: context.tr('Downloads'),
+                  subtitle: context.tr('Encrypted Premium chapters'),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => DownloadsScreen(
+                        apiClient: apiClient,
+                        offlineDownloads: offlineDownloads!,
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 20),

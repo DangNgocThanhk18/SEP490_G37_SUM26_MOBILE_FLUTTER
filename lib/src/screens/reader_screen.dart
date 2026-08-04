@@ -12,6 +12,7 @@ import '../models/chapter.dart';
 import '../models/content_comment.dart';
 import '../services/api_client.dart';
 import '../services/app_preferences.dart';
+import '../services/offline_download_service.dart';
 import '../services/screen_capture_protection.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
@@ -468,6 +469,8 @@ class ReaderScreen extends StatefulWidget {
     this.initialLanguage,
     this.preferences,
     this.viewerIdentifier,
+    this.offlineDownloads,
+    this.preferOffline = false,
   });
 
   final ApiClient apiClient;
@@ -477,6 +480,8 @@ class ReaderScreen extends StatefulWidget {
   final String? initialLanguage;
   final AppPreferences? preferences;
   final String? viewerIdentifier;
+  final OfflineDownloadService? offlineDownloads;
+  final bool preferOffline;
 
   @override
   State<ReaderScreen> createState() => _ReaderScreenState();
@@ -513,8 +518,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
         .clamp(0, widget.chapters.length - 1)
         .toInt();
     _selectedLanguage = widget.initialLanguage;
-    _futureChapter = widget.apiClient.getChapterDetail(_chapter.id);
-    _futureTranslations = widget.apiClient.getChapterTranslations(_chapter.id);
+    _futureChapter = _loadChapterDetail();
+    _futureTranslations = widget.preferOffline
+        ? Future.value(const <ChapterTranslation>[])
+        : widget.apiClient.getChapterTranslations(_chapter.id);
     _scrollController.addListener(_handleScroll);
     _captureProtectionAcquired = true;
     unawaited(ScreenCaptureProtection.acquire());
@@ -566,10 +573,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _preloadAnchorPageIndex = -1;
       _preloadGeneration++;
       _preloadQueue = Future<void>.value();
-      _futureChapter = widget.apiClient.getChapterDetail(_chapter.id);
-      _futureTranslations = widget.apiClient.getChapterTranslations(
-        _chapter.id,
-      );
+      _futureChapter = _loadChapterDetail();
+      _futureTranslations = widget.preferOffline
+          ? Future.value(const <ChapterTranslation>[])
+          : widget.apiClient.getChapterTranslations(_chapter.id);
       _lastOffset = 0;
     });
     _releaseScrollHold();
@@ -577,6 +584,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _progressNotifier.value = 0;
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(0);
+    }
+  }
+
+  Future<ChapterDetail> _loadChapterDetail() async {
+    final offline = widget.offlineDownloads;
+    if (widget.preferOffline && offline != null) {
+      return offline.openChapter(_chapter.id);
+    }
+    try {
+      return await widget.apiClient.getChapterDetail(_chapter.id);
+    } catch (_) {
+      if (offline != null && await offline.hasDownload(_chapter.id)) {
+        return offline.openChapter(_chapter.id);
+      }
+      rethrow;
     }
   }
 
@@ -640,6 +662,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _preloadNearbyPages(List<String> urls, int pageIndex) {
+    // Offline pages are decrypted only by their mounted page widget. Never
+    // pre-decrypt a whole chapter or feed plaintext into the disk image cache.
+    if (urls.any((url) => url.startsWith('comiverse-offline://'))) return;
     final previousAnchor = _preloadAnchorPageIndex;
     if (previousAnchor >= 0 &&
         (pageIndex - previousAnchor).abs() <
@@ -671,7 +696,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
       if (!mounted || generation != _preloadGeneration) return;
       try {
         await precacheImage(
-          _readerImageProvider(url, context),
+          _readerImageProvider(
+            url,
+            context,
+            allowDiskCache: !_chapter.isPremium,
+          ),
           context,
           onError: (_, _) {},
         );
@@ -870,8 +899,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                         return ApiErrorState(
                           error: snapshot.error!,
                           onRetry: () => setState(
-                            () => _futureChapter = widget.apiClient
-                                .getChapterDetail(_chapter.id),
+                            () => _futureChapter = _loadChapterDetail(),
                           ),
                         );
                       }
@@ -987,6 +1015,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                                         'Cannot load page {page}',
                                         values: {'page': index + 1},
                                       ),
+                                      offlineDownloads: widget.offlineDownloads,
+                                      allowDiskCache: !_chapter.isPremium,
                                     );
                                   },
                                 ),
@@ -1627,6 +1657,8 @@ class _BubbleOverlayImage extends StatefulWidget {
     required this.onAspectRatioResolved,
     required this.placeholderColor,
     required this.errorLabel,
+    this.offlineDownloads,
+    this.allowDiskCache = true,
   });
 
   final String imageUrl;
@@ -1636,6 +1668,8 @@ class _BubbleOverlayImage extends StatefulWidget {
   final ValueChanged<double> onAspectRatioResolved;
   final Color placeholderColor;
   final String errorLabel;
+  final OfflineDownloadService? offlineDownloads;
+  final bool allowDiskCache;
 
   @override
   State<_BubbleOverlayImage> createState() => _BubbleOverlayImageState();
@@ -1651,12 +1685,49 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
   bool _hasError = false;
   bool _hasDisplayedImage = false;
   bool _usingHighResolution = false;
+  Uint8List? _offlineBytes;
+  int _offlineLoadGeneration = 0;
+  int _observedDecryptionEpoch = 0;
+  bool _awaitingForegroundReload = false;
+
+  bool get _isOffline => widget.imageUrl.startsWith('comiverse-offline://');
 
   @override
   void initState() {
     super.initState();
     _aspectRatio = widget.initialAspectRatio;
     _usingHighResolution = widget.useHighResolution;
+    _attachOfflineService(widget.offlineDownloads);
+  }
+
+  void _attachOfflineService(OfflineDownloadService? service) {
+    if (service == null) return;
+    _observedDecryptionEpoch = service.decryptionEpoch;
+    service.addListener(_handleOfflineSecurityStateChanged);
+  }
+
+  void _detachOfflineService(OfflineDownloadService? service) {
+    service?.removeListener(_handleOfflineSecurityStateChanged);
+  }
+
+  void _handleOfflineSecurityStateChanged() {
+    final service = widget.offlineDownloads;
+    if (!mounted || service == null || !_isOffline) return;
+    if (_observedDecryptionEpoch != service.decryptionEpoch) {
+      _observedDecryptionEpoch = service.decryptionEpoch;
+      _offlineLoadGeneration++;
+      _releaseOfflineBytes();
+      _provider = null;
+      _hasDisplayedImage = false;
+      _awaitingForegroundReload = !service.isForeground;
+      setState(() {});
+      if (service.isForeground) _resolveOfflineImage();
+      return;
+    }
+    if (_awaitingForegroundReload && service.isForeground) {
+      _awaitingForegroundReload = false;
+      _resolveOfflineImage();
+    }
   }
 
   @override
@@ -1670,17 +1741,30 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
         highResolutionRequested: _usingHighResolution,
         wasPromoted: _usingHighResolution,
       );
-      _resolveImage(
-        CachedNetworkImageProvider(widget.imageUrl, maxWidth: targetWidth),
-        targetWidth,
-      );
+      if (_isOffline) {
+        _resolveOfflineImage();
+      } else {
+        _resolveImage(
+          _onlineReaderProvider(
+            widget.imageUrl,
+            targetWidth,
+            allowDiskCache: widget.allowDiskCache,
+          ),
+          targetWidth,
+        );
+      }
     }
   }
 
   @override
   void didUpdateWidget(covariant _BubbleOverlayImage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.offlineDownloads, widget.offlineDownloads)) {
+      _detachOfflineService(oldWidget.offlineDownloads);
+      _attachOfflineService(widget.offlineDownloads);
+    }
     if (oldWidget.imageUrl != widget.imageUrl) {
+      _releaseOfflineBytes();
       _aspectRatio = widget.initialAspectRatio;
       _hasError = false;
       _hasDisplayedImage = false;
@@ -1693,10 +1777,18 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
               highResolutionRequested: widget.useHighResolution,
               wasPromoted: false,
             );
-      _resolveImage(
-        CachedNetworkImageProvider(widget.imageUrl, maxWidth: targetWidth),
-        targetWidth,
-      );
+      if (_isOffline) {
+        _resolveOfflineImage();
+      } else {
+        _resolveImage(
+          _onlineReaderProvider(
+            widget.imageUrl,
+            targetWidth,
+            allowDiskCache: widget.allowDiskCache,
+          ),
+          targetWidth,
+        );
+      }
     } else if (oldWidget.useHighResolution != widget.useHighResolution) {
       _switchImageResolution(widget.useHighResolution);
     }
@@ -1705,6 +1797,22 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
   void _switchImageResolution(bool useHighResolution) {
     final normalCacheWidth = _cacheWidth;
     if (normalCacheWidth == null) return;
+    if (_isOffline) {
+      final bytes = _offlineBytes;
+      if (!useHighResolution || bytes == null || _usingHighResolution) return;
+      final targetWidth = ReaderImageLoadingPolicy.cacheWidthForResolution(
+        normalCacheWidth: normalCacheWidth,
+        highResolutionRequested: true,
+        wasPromoted: false,
+      );
+      _provider?.evict().ignore();
+      _usingHighResolution = true;
+      _resolveImage(
+        ResizeImage.resizeIfNeeded(targetWidth, null, MemoryImage(bytes)),
+        targetWidth,
+      );
+      return;
+    }
     final targetWidth = ReaderImageLoadingPolicy.cacheWidthForResolution(
       normalCacheWidth: normalCacheWidth,
       highResolutionRequested: useHighResolution,
@@ -1722,9 +1830,50 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
     _usingHighResolution = remainsPromoted;
 
     _resolveImage(
-      CachedNetworkImageProvider(widget.imageUrl, maxWidth: targetWidth),
+      _onlineReaderProvider(
+        widget.imageUrl,
+        targetWidth,
+        allowDiskCache: widget.allowDiskCache,
+      ),
       targetWidth,
     );
+  }
+
+  Future<void> _resolveOfflineImage() async {
+    final service = widget.offlineDownloads;
+    final generation = ++_offlineLoadGeneration;
+    if (service == null) {
+      setState(() => _hasError = true);
+      return;
+    }
+    try {
+      final bytes = await service.readPage(widget.imageUrl);
+      if (!mounted || generation != _offlineLoadGeneration) {
+        service.releasePageBytes(bytes);
+        return;
+      }
+      _releaseOfflineBytes();
+      _offlineBytes = bytes;
+      _resolveImage(
+        ResizeImage.resizeIfNeeded(_cacheWidth, null, MemoryImage(bytes)),
+        _cacheWidth,
+      );
+      if (mounted) setState(() {});
+    } catch (_) {
+      if (mounted && generation == _offlineLoadGeneration) {
+        setState(() => _hasError = true);
+      }
+    }
+  }
+
+  void _releaseOfflineBytes() {
+    final bytes = _offlineBytes;
+    final provider = _provider;
+    _offlineBytes = null;
+    if (bytes != null && provider != null) {
+      provider.evict().ignore();
+    }
+    if (bytes != null) widget.offlineDownloads?.releasePageBytes(bytes);
   }
 
   void _resolveImage(ImageProvider<Object> provider, int? providerCacheWidth) {
@@ -1750,14 +1899,16 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
       onError: (error, stackTrace) {
         if (!mounted || !identical(_provider, provider)) return;
         final normalCacheWidth = _cacheWidth;
-        if (normalCacheWidth != null &&
+        if (!_isOffline &&
+            normalCacheWidth != null &&
             providerCacheWidth != normalCacheWidth) {
           setState(() {
             _usingHighResolution = false;
             _resolveImage(
-              CachedNetworkImageProvider(
+              _onlineReaderProvider(
                 widget.imageUrl,
-                maxWidth: normalCacheWidth,
+                normalCacheWidth,
+                allowDiskCache: widget.allowDiskCache,
               ),
               normalCacheWidth,
             );
@@ -1779,9 +1930,12 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
 
   @override
   void dispose() {
+    _offlineLoadGeneration++;
+    _detachOfflineService(widget.offlineDownloads);
     if (_stream != null && _listener != null) {
       _stream!.removeListener(_listener!);
     }
+    _releaseOfflineBytes();
     super.dispose();
   }
 
@@ -1814,6 +1968,12 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
           fit: StackFit.expand,
           children: [
             ColoredBox(color: widget.placeholderColor),
+            if (_provider == null)
+              Center(
+                child: _awaitingForegroundReload
+                    ? const Icon(Icons.lock_outline_rounded)
+                    : const CircularProgressIndicator(),
+              ),
             if (_provider != null)
               Image(
                 key: ValueKey('reader-page-image-${widget.imageUrl}'),
@@ -1930,8 +2090,26 @@ int _readerImageCacheWidth(BuildContext context) {
   return physicalWidth.ceil().clamp(480, 2048);
 }
 
-ImageProvider<Object> _readerImageProvider(String url, BuildContext context) =>
-    CachedNetworkImageProvider(url, maxWidth: _readerImageCacheWidth(context));
+ImageProvider<Object> _readerImageProvider(
+  String url,
+  BuildContext context, {
+  required bool allowDiskCache,
+}) => _onlineReaderProvider(
+  url,
+  _readerImageCacheWidth(context),
+  allowDiskCache: allowDiskCache,
+);
+
+ImageProvider<Object> _onlineReaderProvider(
+  String url,
+  int? cacheWidth, {
+  required bool allowDiskCache,
+}) {
+  if (allowDiskCache) {
+    return CachedNetworkImageProvider(url, maxWidth: cacheWidth);
+  }
+  return ResizeImage.resizeIfNeeded(cacheWidth, null, NetworkImage(url));
+}
 
 /// Clips a bubble's rectangular container down to its actual freeform
 /// polygon outline, using the bubble's own points relative to its

@@ -3,13 +3,19 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../models/comic.dart';
 import '../services/api_client.dart';
+import '../services/offline_download_service.dart';
 import '../widgets/common_widgets.dart';
 import 'comic_detail_screen.dart';
 
 class RankingScreen extends StatefulWidget {
-  const RankingScreen({super.key, required this.apiClient});
+  const RankingScreen({
+    super.key,
+    required this.apiClient,
+    this.offlineDownloads,
+  });
 
   final ApiClient apiClient;
+  final OfflineDownloadService? offlineDownloads;
 
   @override
   State<RankingScreen> createState() => _RankingScreenState();
@@ -128,6 +134,7 @@ class _RankingScreenState extends State<RankingScreen> {
                             builder: (_) => ComicDetailScreen(
                               apiClient: widget.apiClient,
                               comic: comic,
+                              offlineDownloads: widget.offlineDownloads,
                             ),
                           ),
                         ),

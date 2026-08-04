@@ -11,6 +11,7 @@ import '../models/notification_destination.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
 import '../services/app_preferences.dart';
+import '../services/offline_download_service.dart';
 import '../services/push_notifications.dart';
 import '../theme/app_theme.dart';
 import '../widgets/in_app_notification.dart';
@@ -44,6 +45,7 @@ class MainShell extends StatefulWidget {
     this.pushNotifications,
     this.screenCaptureProtectionEnabled = true,
     this.onScreenCaptureProtectionChanged,
+    this.offlineDownloads,
   });
 
   final ApiClient apiClient;
@@ -60,6 +62,7 @@ class MainShell extends StatefulWidget {
   final PushNotificationCoordinator? pushNotifications;
   final bool screenCaptureProtectionEnabled;
   final ValueChanged<bool>? onScreenCaptureProtectionChanged;
+  final OfflineDownloadService? offlineDownloads;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -111,6 +114,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      widget.offlineDownloads?.onAppResumed();
       _startNotificationPolling();
       _refreshNotifications(
         refreshList: _section == _ShellSection.notifications,
@@ -121,6 +125,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         state == AppLifecycleState.hidden) {
       _notificationTimer?.cancel();
       _notificationTimer = null;
+      widget.offlineDownloads?.onAppBackgrounded();
     }
   }
 
@@ -278,6 +283,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           comic: comic,
           preferences: widget.preferences,
           viewerIdentifier: _readerViewerIdentifier,
+          offlineDownloads: widget.offlineDownloads,
         ),
       );
     } catch (error) {
@@ -308,6 +314,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           initialIndex: index,
           comicTitle: comic.title,
           viewerIdentifier: _readerViewerIdentifier,
+          offlineDownloads: widget.offlineDownloads,
         ),
       );
     } catch (error) {
@@ -379,12 +386,16 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     final pages = [
       HomeScreen(
         apiClient: widget.apiClient,
+        offlineDownloads: widget.offlineDownloads,
         onOpenExplore: () => _goTo(_ShellSection.explore),
         onOpenNotifications: () => _goTo(_ShellSection.notifications),
         unreadCount: _unreadCount,
       ),
       if (_visitedTabs.contains(_ShellSection.explore))
-        ExploreScreen(apiClient: widget.apiClient)
+        ExploreScreen(
+          apiClient: widget.apiClient,
+          offlineDownloads: widget.offlineDownloads,
+        )
       else
         const SizedBox.shrink(),
       if (_visitedTabs.contains(_ShellSection.forum))
@@ -397,6 +408,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           isGuest: !widget.apiClient.hasToken,
           onSignIn: widget.onSignOut,
           onExplore: () => _goTo(_ShellSection.explore),
+          offlineDownloads: widget.offlineDownloads,
         )
       else
         const SizedBox.shrink(),
@@ -427,6 +439,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           screenCaptureProtectionEnabled: widget.screenCaptureProtectionEnabled,
           onScreenCaptureProtectionChanged:
               widget.onScreenCaptureProtectionChanged,
+          offlineDownloads: widget.offlineDownloads,
         )
       else
         const SizedBox.shrink(),

@@ -3,14 +3,20 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../models/comic.dart';
 import '../services/api_client.dart';
+import '../services/offline_download_service.dart';
 import '../widgets/common_widgets.dart';
 import 'comic_detail_screen.dart';
 import 'ranking_screen.dart';
 
 class ExploreScreen extends StatefulWidget {
-  const ExploreScreen({super.key, required this.apiClient});
+  const ExploreScreen({
+    super.key,
+    required this.apiClient,
+    this.offlineDownloads,
+  });
 
   final ApiClient apiClient;
+  final OfflineDownloadService? offlineDownloads;
 
   @override
   State<ExploreScreen> createState() => _ExploreScreenState();
@@ -201,8 +207,11 @@ class _ExploreScreenState extends State<ExploreScreen>
   void _openComic(Comic comic) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) =>
-            ComicDetailScreen(apiClient: widget.apiClient, comic: comic),
+        builder: (_) => ComicDetailScreen(
+          apiClient: widget.apiClient,
+          comic: comic,
+          offlineDownloads: widget.offlineDownloads,
+        ),
       ),
     );
   }
@@ -218,7 +227,10 @@ class _ExploreScreenState extends State<ExploreScreen>
             tooltip: context.tr('Ranking'),
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(
-                builder: (_) => RankingScreen(apiClient: widget.apiClient),
+                builder: (_) => RankingScreen(
+                  apiClient: widget.apiClient,
+                  offlineDownloads: widget.offlineDownloads,
+                ),
               ),
             ),
             icon: const Icon(Icons.leaderboard_outlined),

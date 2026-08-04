@@ -7,6 +7,7 @@ import '../models/comic.dart';
 import '../models/content_comment.dart';
 import '../services/api_client.dart';
 import '../services/app_preferences.dart';
+import '../services/offline_download_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/content_comment_section.dart';
@@ -20,12 +21,14 @@ class ComicDetailScreen extends StatefulWidget {
     required this.comic,
     this.preferences,
     this.viewerIdentifier,
+    this.offlineDownloads,
   });
 
   final ApiClient apiClient;
   final Comic comic;
   final AppPreferences? preferences;
   final String? viewerIdentifier;
+  final OfflineDownloadService? offlineDownloads;
 
   @override
   State<ComicDetailScreen> createState() => _ComicDetailScreenState();
@@ -174,6 +177,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
               initialLanguage: _selectedLanguage,
               preferences: widget.preferences,
               viewerIdentifier: widget.viewerIdentifier,
+              offlineDownloads: widget.offlineDownloads,
             ),
           ),
         )
@@ -359,12 +363,8 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                               _ActionItem(
                                 icon: Icons.download_outlined,
                                 label: context.tr('Download'),
-                                onTap: () => _showMessage(
-                                  context.tr(
-                                    'Offline downloads are available with Premium.',
-                                  ),
-                                  type: InAppNotificationType.warning,
-                                ),
+                                onTap: () =>
+                                    _showDownloadPicker(comic, chapters),
                               ),
                             ],
                           ),
@@ -506,6 +506,171 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
             ],
           );
         },
+      ),
+    );
+  }
+
+  Future<void> _showDownloadPicker(
+    Comic comic,
+    List<ChapterLite> chapters,
+  ) async {
+    final service = widget.offlineDownloads;
+    if (service == null || !await service.isSupported) {
+      if (!mounted) return;
+      _showMessage(
+        context.tr(
+          'Secure offline downloads are available in the configured Android app.',
+        ),
+        type: InAppNotificationType.information,
+      );
+      return;
+    }
+    if (!widget.apiClient.hasToken) {
+      _requestSignIn();
+      return;
+    }
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _DownloadChapterSheet(
+        chapters: chapters,
+        comicTitle: comic.title,
+        service: service,
+      ),
+    );
+  }
+}
+
+class _DownloadChapterSheet extends StatefulWidget {
+  const _DownloadChapterSheet({
+    required this.chapters,
+    required this.comicTitle,
+    required this.service,
+  });
+
+  final List<ChapterLite> chapters;
+  final String comicTitle;
+  final OfflineDownloadService service;
+
+  @override
+  State<_DownloadChapterSheet> createState() => _DownloadChapterSheetState();
+}
+
+class _DownloadChapterSheetState extends State<_DownloadChapterSheet> {
+  final Set<String> _downloaded = {};
+  final Set<String> _busy = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDownloaded();
+  }
+
+  Future<void> _loadDownloaded() async {
+    for (final chapter in widget.chapters) {
+      if (await widget.service.hasDownload(chapter.id)) {
+        _downloaded.add(chapter.id);
+      }
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _download(ChapterLite chapter) async {
+    if (_busy.contains(chapter.id)) return;
+    setState(() => _busy.add(chapter.id));
+    try {
+      await widget.service.downloadChapter(
+        chapter: chapter,
+        comicTitle: widget.comicTitle,
+      );
+      if (!mounted) return;
+      setState(() => _downloaded.add(chapter.id));
+      InAppNotifications.success(
+        context,
+        title: context.tr('Download complete'),
+        message: context.tr(
+          'Chapter {number} is ready to read offline.',
+          values: {'number': chapter.chapterNumber},
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      InAppNotifications.error(
+        context,
+        title: context.tr('Download failed'),
+        message: context.localizedError(error),
+      );
+    } finally {
+      if (mounted) setState(() => _busy.remove(chapter.id));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * 0.72,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    context.tr('Download chapters'),
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    context.tr(
+                      'Premium is verified by the server. Offline access must be renewed every 7 days.',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.builder(
+                itemCount: widget.chapters.length,
+                itemBuilder: (context, index) {
+                  final chapter = widget.chapters[index];
+                  final downloaded = _downloaded.contains(chapter.id);
+                  final busy = _busy.contains(chapter.id);
+                  return ListTile(
+                    title: Text(chapter.title),
+                    subtitle: Text(
+                      context.tr(
+                        'Chapter {number}',
+                        values: {'number': chapter.chapterNumber},
+                      ),
+                    ),
+                    trailing: busy
+                        ? const SizedBox.square(
+                            dimension: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : IconButton(
+                            tooltip: context.tr(
+                              downloaded ? 'Download again' : 'Download',
+                            ),
+                            onPressed: () => _download(chapter),
+                            icon: Icon(
+                              downloaded
+                                  ? Icons.offline_pin_rounded
+                                  : Icons.download_rounded,
+                            ),
+                          ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

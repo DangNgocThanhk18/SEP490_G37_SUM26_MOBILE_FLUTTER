@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../models/comic.dart';
 import '../services/api_client.dart';
+import '../services/offline_download_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/comiverse_logo.dart';
@@ -16,12 +17,14 @@ class HomeScreen extends StatefulWidget {
     required this.onOpenExplore,
     required this.onOpenNotifications,
     required this.unreadCount,
+    this.offlineDownloads,
   });
 
   final ApiClient apiClient;
   final VoidCallback onOpenExplore;
   final VoidCallback onOpenNotifications;
   final int unreadCount;
+  final OfflineDownloadService? offlineDownloads;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -90,8 +93,11 @@ class _HomeScreenState extends State<HomeScreen>
   void _openComic(Comic comic) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) =>
-            ComicDetailScreen(apiClient: widget.apiClient, comic: comic),
+        builder: (_) => ComicDetailScreen(
+          apiClient: widget.apiClient,
+          comic: comic,
+          offlineDownloads: widget.offlineDownloads,
+        ),
       ),
     );
   }
@@ -273,8 +279,10 @@ class _HomeScreenState extends State<HomeScreen>
                       onAction: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) =>
-                                RankingScreen(apiClient: widget.apiClient),
+                            builder: (_) => RankingScreen(
+                              apiClient: widget.apiClient,
+                              offlineDownloads: widget.offlineDownloads,
+                            ),
                           ),
                         );
                       },

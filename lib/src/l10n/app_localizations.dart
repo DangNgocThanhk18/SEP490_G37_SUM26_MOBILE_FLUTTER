@@ -137,6 +137,47 @@ const Map<String, String> _vietnamese = {
   'Done': 'Xong',
   'Download': 'Tải xuống',
   'Downloads': 'Nội dung đã tải',
+  'Encrypted Premium chapters': 'Chương Premium được mã hóa',
+  'Secure offline downloads are available in the configured Android app.':
+      'Tải xuống ngoại tuyến an toàn chỉ khả dụng trên bản Android đã được cấu hình.',
+  'Download chapters': 'Tải chương truyện',
+  'Premium is verified by the server. Offline access must be renewed every 7 days.':
+      'Premium được máy chủ xác minh. Quyền đọc ngoại tuyến phải được gia hạn mỗi 7 ngày.',
+  'Download complete': 'Tải xuống hoàn tất',
+  'Download failed': 'Tải xuống thất bại',
+  'Download again': 'Tải lại',
+  'Chapter {number} is ready to read offline.':
+      'Chương {number} đã sẵn sàng để đọc ngoại tuyến.',
+  'Offline access renewed': 'Đã gia hạn quyền đọc ngoại tuyến',
+  'This chapter can be read offline for up to 7 more days.':
+      'Chương này có thể được đọc ngoại tuyến thêm tối đa 7 ngày.',
+  'Renewal failed': 'Gia hạn thất bại',
+  'Remove download?': 'Xóa nội dung tải xuống?',
+  'Remove Chapter {number} from this device?':
+      'Xóa Chương {number} khỏi thiết bị này?',
+  'No chapters are downloaded on this device.':
+      'Chưa có chương nào được tải xuống thiết bị này.',
+  'Downloaded chapters stay encrypted. Connect to the Internet at least once every 7 days to verify Premium access.':
+      'Các chương đã tải luôn được mã hóa. Hãy kết nối Internet ít nhất một lần mỗi 7 ngày để xác minh quyền Premium.',
+  'Offline until {date}': 'Đọc ngoại tuyến đến {date}',
+  'Renew offline access': 'Gia hạn quyền đọc ngoại tuyến',
+  'Remove download': 'Xóa nội dung tải xuống',
+  'Manage offline devices': 'Quản lý thiết bị ngoại tuyến',
+  'Offline devices': 'Thiết bị ngoại tuyến',
+  'No offline devices are registered.':
+      'Chưa có thiết bị ngoại tuyến nào được đăng ký.',
+  'Current device': 'Thiết bị hiện tại',
+  'Last verified {date}': 'Xác minh gần nhất {date}',
+  'Revoke offline device?': 'Thu hồi thiết bị ngoại tuyến?',
+  'This is the current device. Revoking it removes all local downloads and requires device enrollment again.':
+      'Đây là thiết bị hiện tại. Việc thu hồi sẽ xóa toàn bộ nội dung tải xuống và yêu cầu đăng ký thiết bị lại.',
+  'This device will no longer be able to renew or open its downloaded chapters.':
+      'Thiết bị này sẽ không thể gia hạn hoặc mở các chương đã tải.',
+  'Revoke': 'Thu hồi',
+  'Device revoked': 'Đã thu hồi thiết bị',
+  'Offline access was removed from that device.':
+      'Quyền đọc ngoại tuyến đã bị xóa khỏi thiết bị đó.',
+  'Could not revoke device': 'Không thể thu hồi thiết bị',
   'Early chapter access': 'Đọc chương mới sớm',
   'Email': 'Email',
   'Email or username': 'Email hoặc tên đăng nhập',

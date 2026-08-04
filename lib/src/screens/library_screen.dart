@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../models/comic.dart';
 import '../services/api_client.dart';
+import '../services/offline_download_service.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/in_app_notification.dart';
 import 'comic_detail_screen.dart';
@@ -14,12 +15,14 @@ class LibraryScreen extends StatefulWidget {
     required this.isGuest,
     required this.onSignIn,
     required this.onExplore,
+    this.offlineDownloads,
   });
 
   final ApiClient apiClient;
   final bool isGuest;
   final VoidCallback onSignIn;
   final VoidCallback onExplore;
+  final OfflineDownloadService? offlineDownloads;
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
@@ -135,8 +138,11 @@ class _LibraryScreenState extends State<LibraryScreen>
     Navigator.of(context)
         .push(
           MaterialPageRoute(
-            builder: (_) =>
-                ComicDetailScreen(apiClient: widget.apiClient, comic: comic),
+            builder: (_) => ComicDetailScreen(
+              apiClient: widget.apiClient,
+              comic: comic,
+              offlineDownloads: widget.offlineDownloads,
+            ),
           ),
         )
         .then((_) => _reload());

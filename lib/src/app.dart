@@ -9,6 +9,7 @@ import 'screens/login_screen.dart';
 import 'screens/main_shell.dart';
 import 'services/api_client.dart';
 import 'services/app_preferences.dart';
+import 'services/offline_download_service.dart';
 import 'services/push_notifications.dart';
 import 'services/screen_capture_protection.dart';
 import 'theme/app_theme.dart';
@@ -20,11 +21,13 @@ class ComiVerseApp extends StatefulWidget {
     this.apiClient,
     this.preferences,
     this.pushNotifications,
+    this.offlineDownloads,
   });
 
   final ApiClient? apiClient;
   final AppPreferences? preferences;
   final PushNotificationCoordinator? pushNotifications;
+  final OfflineDownloadService? offlineDownloads;
 
   @override
   State<ComiVerseApp> createState() => _ComiVerseAppState();
@@ -34,6 +37,7 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
   late final ApiClient _apiClient;
   late final AppPreferences _preferences;
   late final PushNotificationCoordinator _pushNotifications;
+  late final OfflineDownloadService _offlineDownloads;
   late final bool _ownsPushNotifications;
   UserProfile? _user;
   bool _isGuest = false;
@@ -47,6 +51,9 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
     super.initState();
     _apiClient = widget.apiClient ?? ApiClient();
     _preferences = widget.preferences ?? const SecureAppPreferences();
+    _offlineDownloads =
+        widget.offlineDownloads ??
+        OfflineDownloadService(apiClient: _apiClient);
     _ownsPushNotifications = widget.pushNotifications == null;
     _pushNotifications =
         widget.pushNotifications ?? FirebasePushNotifications();
@@ -59,6 +66,7 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
     final themeFuture = _readThemeMode();
     final screenCaptureFuture = _readScreenCaptureProtectionEnabled();
     final user = await userFuture;
+    await _offlineDownloads.bindAccount(user);
     final languageCode = await languageFuture;
     final themeMode = await themeFuture;
     final screenCaptureProtectionEnabled = await screenCaptureFuture;
@@ -186,10 +194,12 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
       _isGuest = false;
     });
     unawaited(_pushNotifications.syncAuthenticatedUser(_apiClient));
+    unawaited(_offlineDownloads.bindAccount(user));
   }
 
   void _handleUserChanged(UserProfile user) {
     setState(() => _user = user);
+    unawaited(_offlineDownloads.bindAccount(user));
   }
 
   void _handleGuestMode() {
@@ -200,6 +210,7 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
   }
 
   Future<void> _handleSignOut() async {
+    await _offlineDownloads.bindAccount(null);
     await _pushNotifications.unregisterAuthenticatedUser(_apiClient);
     await _apiClient.clearSession();
     if (!mounted) return;
@@ -258,6 +269,7 @@ class _ComiVerseAppState extends State<ComiVerseApp> {
                   ScreenCaptureProtection.canUserConfigure
                   ? _changeScreenCaptureProtection
                   : null,
+              offlineDownloads: _offlineDownloads,
             )
           : LoginScreen(
               apiClient: _apiClient,

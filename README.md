@@ -163,3 +163,46 @@ dart run flutter_native_splash:create
 
 Android launchers cache icons. Uninstall the previous build or remove and add
 the launcher shortcut again when visually verifying an icon change.
+
+## Secure Android offline chapters
+
+Offline chapter packages are Android-only, encrypted page-by-page, stored in
+the app-private support directory, and opened only after a server-signed
+7-day license is validated. Build with the backend's pinned Ed25519 public key
+(Base64 raw 32-byte key or Base64 X.509 SubjectPublicKeyInfo):
+
+```powershell
+flutter run -d <android-device> `
+  --dart-define=API_BASE_URL=https://<backend>/api `
+  --dart-define=OFFLINE_LICENSE_ED25519_PUBLIC_KEY=<base64-public-key> `
+  --dart-define=OFFLINE_LICENSE_SIGNING_KEY_ID=offline-ed25519-v1
+```
+
+The public verification key is not a secret, but it must come from the trusted
+release configuration—not from an offline-license response. Missing or invalid
+pinning disables downloads and fails closed. The backend must configure the
+matching Ed25519 private key and the `comiverse-api` / `comiverse-android`
+issuer/audience contract.
+
+Release APKs must use a real signing key. Create `android/key.properties`
+(ignored by Git) locally or in CI:
+
+```properties
+storeFile=C:/secure/comiverse-upload.jks
+storePassword=<secret>
+keyAlias=comiverse
+keyPassword=<secret>
+```
+
+Then build with the same public-key define:
+
+```powershell
+flutter build apk --release `
+  --dart-define=OFFLINE_LICENSE_ED25519_PUBLIC_KEY=<base64-public-key> `
+  --dart-define=OFFLINE_LICENSE_SIGNING_KEY_ID=offline-ed25519-v1
+```
+
+The release build intentionally fails if `android/key.properties` is absent;
+debug/profile builds remain usable with local HTTP backends. Release traffic is
+HTTPS-only. This DRM is defense in depth and cannot guarantee protection on a
+rooted, hooked, or modified device.

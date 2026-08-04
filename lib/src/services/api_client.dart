@@ -10,14 +10,17 @@ import '../models/content_comment.dart';
 import '../models/app_notification.dart';
 import '../models/forum.dart';
 import '../models/notification_preferences.dart';
+import '../models/offline_download.dart';
 import '../models/premium_plan.dart';
 import '../models/user_profile.dart';
 import 'session_storage.dart';
 
 class ApiException implements Exception {
-  const ApiException(this.message);
+  const ApiException(this.message, {this.statusCode, this.code});
 
   final String message;
+  final int? statusCode;
+  final String? code;
 
   @override
   String toString() => message;
@@ -33,6 +36,13 @@ class LoginResult {
   final String token;
   final String refreshToken;
   final UserProfile user;
+}
+
+class OfflinePackageResponse {
+  const OfflinePackageResponse({required this.headers, required this.bytes});
+
+  final OfflinePackageHeaders headers;
+  final Stream<List<int>> bytes;
 }
 
 class ApiClient {
@@ -780,6 +790,189 @@ class ApiClient {
     );
   }
 
+  Future<OfflineDeviceChallenge> createOfflineDeviceChallenge({
+    required String deviceId,
+    required String deviceName,
+    required String devicePublicKey,
+  }) async {
+    final json = await _request(
+      'POST',
+      '/downloads/devices/challenges',
+      body: {
+        'deviceId': deviceId,
+        'deviceName': deviceName,
+        'devicePublicKey': devicePublicKey,
+      },
+    );
+    try {
+      return OfflineDeviceChallenge.fromJson(json);
+    } on FormatException {
+      throw const ApiException('Cannot read the offline device challenge.');
+    }
+  }
+
+  Future<OfflineDeviceEnrollment> enrollOfflineDevice({
+    required String challengeId,
+    required String signature,
+  }) async {
+    final json = await _request(
+      'POST',
+      '/downloads/devices',
+      body: {'challengeId': challengeId, 'signature': signature},
+    );
+    try {
+      return OfflineDeviceEnrollment.fromJson(json);
+    } on FormatException {
+      throw const ApiException('Cannot read the offline device enrollment.');
+    }
+  }
+
+  Future<List<OfflineRegisteredDevice>> getOfflineDevices() async {
+    final json = await _request('GET', '/downloads/devices');
+    final data = _unwrapData(json);
+    if (data is! List) return const [];
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(OfflineRegisteredDevice.fromJson)
+        .toList(growable: false);
+  }
+
+  Future<void> revokeOfflineDevice(String deviceKeyId) => _request(
+    'DELETE',
+    '/downloads/devices/${Uri.encodeComponent(deviceKeyId)}',
+  ).then((_) {});
+
+  Future<OfflinePackageResponse> downloadOfflineChapter({
+    required String chapterId,
+    required String deviceKeyId,
+  }) async {
+    if (!hasToken) {
+      throw const ApiException(
+        'Sign in before downloading a chapter.',
+        statusCode: 401,
+      );
+    }
+    final uri = Uri.parse(
+      '$baseUrl/downloads/chapters/${Uri.encodeComponent(chapterId)}',
+    );
+    final request = http.Request('POST', uri)
+      ..headers['Content-Type'] = 'application/json'
+      ..headers['Accept'] = 'application/vnd.comiverse.cvpack'
+      ..headers['Accept-Language'] = _languageCode
+      ..headers['Authorization'] = 'Bearer $_token'
+      ..body = jsonEncode({'deviceKeyId': deviceKeyId});
+    try {
+      // The backend creates, encrypts, and hashes the package before sending
+      // headers. Large chapters legitimately need longer than an ordinary API
+      // read, but a stalled body still fails via the inactivity timeout below.
+      final response = await _httpClient
+          .send(request)
+          .timeout(const Duration(minutes: 5));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final body = await utf8.decoder.bind(response.stream).join();
+        var message = 'Offline chapter download failed.';
+        String? code;
+        try {
+          final decoded = jsonDecode(body);
+          if (decoded is Map<String, dynamic>) {
+            message = (decoded['message'] ?? decoded['error'] ?? message)
+                .toString();
+            final errors = decoded['errors'];
+            code =
+                (decoded['code'] ??
+                        (errors is Map<String, dynamic>
+                            ? errors['code']
+                            : null))
+                    ?.toString();
+          }
+        } catch (_) {}
+        throw ApiException(
+          message,
+          statusCode: response.statusCode,
+          code: code,
+        );
+      }
+      if ((response.headers['content-type'] ?? '').toLowerCase().startsWith(
+            'application/vnd.comiverse.cvpack',
+          ) ==
+          false) {
+        throw const ApiException(
+          'Backend returned an invalid offline package content type.',
+        );
+      }
+      String requiredHeader(String name) {
+        final value = response.headers[name.toLowerCase()]?.trim() ?? '';
+        if (value.isEmpty) {
+          throw ApiException('Backend did not return the $name header.');
+        }
+        return value;
+      }
+
+      final expiresAt = DateTime.tryParse(
+        requiredHeader('X-Comiverse-License-Expires-At'),
+      );
+      final serverTime = DateTime.tryParse(
+        requiredHeader('X-Comiverse-Server-Time'),
+      );
+      if (expiresAt == null || serverTime == null) {
+        throw const ApiException(
+          'Backend returned an invalid offline license time.',
+        );
+      }
+      return OfflinePackageResponse(
+        headers: OfflinePackageHeaders(
+          licenseToken: requiredHeader('X-Comiverse-License'),
+          wrappedContentKey: requiredHeader('X-Comiverse-Wrapped-Key'),
+          keyAlgorithm: requiredHeader('X-Comiverse-Key-Algorithm'),
+          expiresAt: expiresAt.toUtc(),
+          serverTime: serverTime.toUtc(),
+          packageSha256: requiredHeader(
+            'X-Comiverse-Package-Sha256',
+          ).toLowerCase(),
+          manifestSha256: requiredHeader(
+            'X-Comiverse-Manifest-Sha256',
+          ).toLowerCase(),
+          packageId: requiredHeader('X-Comiverse-Package-Id'),
+          deviceKeyId: requiredHeader('X-Comiverse-Device-Key-Id'),
+          formatVersion:
+              int.tryParse(requiredHeader('X-Comiverse-Format-Version')) ?? 0,
+          signingKeyId: requiredHeader('X-Comiverse-Signing-Key-Id'),
+        ),
+        bytes: response.stream.timeout(
+          const Duration(seconds: 45),
+          onTimeout: (sink) {
+            sink.addError(
+              TimeoutException('Offline package download stalled.'),
+            );
+            sink.close();
+          },
+        ),
+      );
+    } on http.ClientException {
+      throw ApiException(
+        'Cannot connect to backend. Check that Spring Boot is running at $baseUrl.',
+      );
+    } on TimeoutException {
+      throw ApiException('Request timed out while connecting to $baseUrl.');
+    }
+  }
+
+  Future<OfflineLicenseRenewal> renewOfflineLicense({
+    required String packageId,
+    required String deviceKeyId,
+  }) async {
+    final json = await _request(
+      'POST',
+      '/downloads/packages/${Uri.encodeComponent(packageId)}/licenses',
+      body: {'deviceKeyId': deviceKeyId},
+    );
+    try {
+      return OfflineLicenseRenewal.fromJson(json);
+    } on FormatException {
+      throw const ApiException('Cannot read the renewed offline license.');
+    }
+  }
+
   Future<Map<String, dynamic>> _request(
     String method,
     String path, {
@@ -816,7 +1009,18 @@ class ApiClient {
             ? (decoded['message'] ?? decoded['error'] ?? 'Request failed')
                   .toString()
             : 'Request failed';
-        throw ApiException(message);
+        throw ApiException(
+          message,
+          statusCode: response.statusCode,
+          code: decoded is Map<String, dynamic>
+              ? (decoded['code'] ??
+                        (decoded['errors'] is Map<String, dynamic>
+                            ? (decoded['errors']
+                                  as Map<String, dynamic>)['code']
+                            : null))
+                    ?.toString()
+              : null,
+        );
       }
 
       if (decoded is Map<String, dynamic>) {
