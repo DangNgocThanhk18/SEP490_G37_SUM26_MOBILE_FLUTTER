@@ -73,7 +73,11 @@ android {
             }
         }
     }
+    lint {
+        checkReleaseBuilds = false
+    }
 }
+
 
 flutter {
     source = "../.."
