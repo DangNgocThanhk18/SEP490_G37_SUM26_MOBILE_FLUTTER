@@ -662,9 +662,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _preloadNearbyPages(List<String> urls, int pageIndex) {
-    // Offline pages are decrypted only by their mounted page widget. Never
-    // pre-decrypt a whole chapter or feed plaintext into the disk image cache.
-    if (urls.any((url) => url.startsWith('comiverse-offline://'))) return;
+    final isOffline = urls.isNotEmpty && urls.first.startsWith('comiverse-offline://');
     final previousAnchor = _preloadAnchorPageIndex;
     if (previousAnchor >= 0 &&
         (pageIndex - previousAnchor).abs() <
@@ -682,10 +680,43 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
     final generation = _preloadGeneration;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _preloadQueue = _preloadQueue.then(
-        (_) => _precachePagesSequentially(targets, generation),
-      );
+      if (isOffline) {
+        _preloadQueue = _preloadQueue.then(
+          (_) => _precacheOfflinePagesSequentially(targets, generation),
+        );
+      } else {
+        _preloadQueue = _preloadQueue.then(
+          (_) => _precachePagesSequentially(targets, generation),
+        );
+      }
     });
+  }
+
+  Future<void> _precacheOfflinePagesSequentially(
+    List<String> urls,
+    int generation,
+  ) async {
+    for (final url in urls) {
+      if (!mounted || generation != _preloadGeneration) return;
+      try {
+        final offlineService = widget.offlineDownloads;
+        if (offlineService != null) {
+          final bytes = await offlineService.readPage(url);
+          if (mounted && generation == _preloadGeneration) {
+            final cacheWidth = _readerImageCacheWidth(context);
+            await precacheImage(
+              ResizeImage.resizeIfNeeded(cacheWidth, null, MemoryImage(bytes)),
+              context,
+              onError: (_, _) {},
+            );
+          }
+        }
+      } catch (_) {
+        // Do not permanently mark failures
+      } finally {
+        _activeImagePreloads.remove(url);
+      }
+    }
   }
 
   Future<void> _precachePagesSequentially(
@@ -1721,12 +1752,12 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
       _hasDisplayedImage = false;
       _awaitingForegroundReload = !service.isForeground;
       setState(() {});
-      if (service.isForeground) _resolveOfflineImage();
+      if (service.isForeground) _resolveOfflineImageSyncIfPossible();
       return;
     }
     if (_awaitingForegroundReload && service.isForeground) {
       _awaitingForegroundReload = false;
-      _resolveOfflineImage();
+      _resolveOfflineImageSyncIfPossible();
     }
   }
 
@@ -1742,7 +1773,7 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
         wasPromoted: _usingHighResolution,
       );
       if (_isOffline) {
-        _resolveOfflineImage();
+        _resolveOfflineImageSyncIfPossible();
       } else {
         _resolveImage(
           _onlineReaderProvider(
@@ -1778,7 +1809,7 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
               wasPromoted: false,
             );
       if (_isOffline) {
-        _resolveOfflineImage();
+        _resolveOfflineImageSyncIfPossible();
       } else {
         _resolveImage(
           _onlineReaderProvider(
@@ -1839,7 +1870,25 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
     );
   }
 
-  Future<void> _resolveOfflineImage() async {
+  void _resolveOfflineImageSyncIfPossible() {
+    final service = widget.offlineDownloads;
+    if (service == null) {
+      _hasError = true;
+      return;
+    }
+    final cachedBytes = service.getCachedPage(widget.imageUrl);
+    if (cachedBytes != null) {
+      _offlineBytes = cachedBytes;
+      _resolveImage(
+        ResizeImage.resizeIfNeeded(_cacheWidth, null, MemoryImage(cachedBytes)),
+        _cacheWidth,
+      );
+    } else {
+      _resolveOfflineImageAsync();
+    }
+  }
+
+  Future<void> _resolveOfflineImageAsync() async {
     final service = widget.offlineDownloads;
     final generation = ++_offlineLoadGeneration;
     if (service == null) {
@@ -1868,11 +1917,7 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
 
   void _releaseOfflineBytes() {
     final bytes = _offlineBytes;
-    final provider = _provider;
     _offlineBytes = null;
-    if (bytes != null && provider != null) {
-      provider.evict().ignore();
-    }
     if (bytes != null) widget.offlineDownloads?.releasePageBytes(bytes);
   }
 

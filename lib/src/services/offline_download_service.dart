@@ -15,6 +15,8 @@ import 'offline_download_store_contract.dart';
 import 'offline_platform_security.dart';
 import 'session_storage.dart';
 
+String _computeSha256(Uint8List bytes) => sha256.convert(bytes).toString();
+
 abstract interface class OfflineLicenseVerifier {
   Future<OfflineLicenseClaims> verify(String compactJws);
 }
@@ -169,9 +171,17 @@ class OfflineDownloadService extends ChangeNotifier {
   int _decryptionEpoch = 0;
   bool _isForeground = true;
 
+  final Map<String, Uint8List> _pageBytesCache = {};
+  static const int _maxCachedPagesInMemory = 40;
+
   String? get accountScope => _accountScope;
   int get decryptionEpoch => _decryptionEpoch;
   bool get isForeground => _isForeground;
+
+  Uint8List? getCachedPage(String offlineUri) {
+    if (!_isForeground) return null;
+    return _pageBytesCache[offlineUri];
+  }
 
   bool get isConfigured =>
       licenseVerifier is! Ed25519OfflineLicenseVerifier ||
@@ -194,6 +204,7 @@ class OfflineDownloadService extends ChangeNotifier {
     _verifiedPackageHashes.clear();
     _openSessions.clear();
     _trustedAnchors.clear();
+    _pageBytesCache.clear();
     _decryptionEpoch++;
     notifyListeners();
   }
@@ -486,6 +497,9 @@ class OfflineDownloadService extends ChangeNotifier {
         'Offline pages are locked while the app is in the background.',
       );
     }
+    final cached = _pageBytesCache[offlineUri];
+    if (cached != null) return cached;
+
     final uri = Uri.tryParse(offlineUri);
     if (uri == null || uri.scheme != 'comiverse-offline') {
       throw const OfflineDownloadException(
@@ -523,7 +537,8 @@ class OfflineDownloadService extends ChangeNotifier {
       length: page.length,
     );
     try {
-      if (sha256.convert(encrypted).toString() != page.ciphertextSha256) {
+      final encryptedHash = await compute(_computeSha256, encrypted);
+      if (encryptedHash != page.ciphertextSha256) {
         throw const OfflineDownloadException(
           'corrupted_package',
           'The downloaded page failed its integrity check.',
@@ -539,14 +554,19 @@ class OfflineDownloadService extends ChangeNotifier {
           utf8.encode(claims.aadForPage(pageNumber, page.pageSha256)),
         ),
       );
+      final plaintextHash = await compute(_computeSha256, plaintext);
       if (plaintext.length != page.plaintextLength ||
-          sha256.convert(plaintext).toString() != page.pageSha256) {
+          plaintextHash != page.pageSha256) {
         plaintext.fillRange(0, plaintext.length, 0);
         throw const OfflineDownloadException(
           'corrupted_package',
           'The decrypted page failed its integrity check.',
         );
       }
+      if (_pageBytesCache.length >= _maxCachedPagesInMemory) {
+        _pageBytesCache.remove(_pageBytesCache.keys.first);
+      }
+      _pageBytesCache[offlineUri] = plaintext;
       return plaintext;
     } on OfflineDownloadException {
       rethrow;
@@ -561,7 +581,9 @@ class OfflineDownloadService extends ChangeNotifier {
   }
 
   void releasePageBytes(Uint8List bytes) {
-    bytes.fillRange(0, bytes.length, 0);
+    if (!_pageBytesCache.containsValue(bytes)) {
+      bytes.fillRange(0, bytes.length, 0);
+    }
   }
 
   Future<void> deleteDownload(String chapterId) async {
@@ -797,7 +819,8 @@ class OfflineDownloadService extends ChangeNotifier {
       length: manifestLength,
       staged: staged,
     );
-    if (sha256.convert(manifestBytes).toString() != claims.manifestSha256) {
+    final manifestHash = await compute(_computeSha256, manifestBytes);
+    if (manifestHash != claims.manifestSha256) {
       throw const OfflineDownloadException(
         'corrupted_package',
         'The downloaded chapter manifest failed its integrity check.',
