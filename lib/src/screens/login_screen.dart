@@ -1,3 +1,4 @@
+import "dart:convert";
 import "package:flutter/material.dart";
 import "package:google_sign_in/google_sign_in.dart";
 
@@ -85,6 +86,8 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
+      // Force the account picker to show by signing out any cached session first
+      await _googleSignIn.signOut();
       // Trigger the Google authentication flow
       final googleUser = await _googleSignIn.signIn();
       if (googleUser == null || !mounted) {
@@ -202,32 +205,6 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       const SizedBox(height: 32),
-                      // ── Google button ───────────────────────────────────────
-                      _GoogleSignInButton(
-                        onPressed: _signInWithGoogle,
-                        loading: _isGoogleLoading,
-                      ),
-                      const SizedBox(height: 16),
-                      // ── divider ─────────────────────────────────────────────
-                      Row(
-                        children: [
-                          const Expanded(child: Divider()),
-                          Padding(
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 12),
-                            child: Text(
-                              context.tr("or"),
-                              style: TextStyle(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ),
-                          const Expanded(child: Divider()),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
                       // ── credentials form ────────────────────────────────────
                       Form(
                         key: _formKey,
@@ -302,7 +279,33 @@ class _LoginScreenState extends State<LoginScreen> {
                           loading: _isLoading,
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 24),
+                      // ── divider ─────────────────────────────────────────────
+                      Row(
+                        children: [
+                          const Expanded(child: Divider()),
+                          Padding(
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 12),
+                            child: Text(
+                              context.tr("or"),
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                          const Expanded(child: Divider()),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+                      // ── Google button ───────────────────────────────────────
+                      _GoogleSignInButton(
+                        onPressed: _signInWithGoogle,
+                        loading: _isGoogleLoading,
+                      ),
+                      const SizedBox(height: 16),
                       OutlinedButton(
                         onPressed: _isLoading ? null : widget.onContinueAsGuest,
                         style: OutlinedButton.styleFrom(
@@ -391,94 +394,19 @@ class _GoogleSignInButton extends StatelessWidget {
   }
 }
 
-/// Renders the colourful Google "G" logo using a CustomPainter.
 class _GoogleLogo extends StatelessWidget {
   const _GoogleLogo({this.size = 24});
   final double size;
 
+  static const _base64 =
+      "iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAACXBIWXMAAAsTAAALEwEAmpwYAAAEkUlEQVR4nO2Zb0wbZRzHn3taesUtRpOJYbo/DoQM5c/GMgryzxkYxbGBiQsbNBCEFGaIY8zCCuaUMSiQAQMGQWAgcSY2GeuNuzpc8NqNvRoCItE3841Dthj3ToNzbX+mVRBI197Zo2VJv8n3XZ+nn89dn6dPrwj5448/HgcoJIWqgGIoxywU4HuQTfwJSsIKBxBAKgJIQzbIJhZBhX+BE/g6VAUU2ccgXwc0UgWU4tvwNmGBJASCqiQsoMa3QRsQ433wOlk4qPEsvCkQ2llTEUAxnoEaFOIdeA3RCumEzWPwtT2IrHCK0K0f+HkUCMX4B9HBk9b0PTwNFJKJC9+NngcVfrDu8En/toJoFw9+EMnhOPGr1+DLCE40eIeAGn/vPXgsMvyHRIfgrbEMT0IlroUmaQpQaAtQKAjOSN6C05hy7Db21zgbW4pN4sI3kyGQQVh5g5+W9PJZfEChZ+ADydAqkVKR4R1vVIHv8IIvwPNwDr0oeP4aFAJ5+P76wJvl22CcfAQaCUCyC/gSPAV6JEEbLWAmdWAmwdHeAIB0wvmV35DweiQBs2x+WcDeURmACv8Hn0lYoAK9hDZiwCSPXwW/VI4E0En/ObuclPSjjRowybROBZY6FPAAyhGJNmrATF5xKWCSdQiZL1gzC2I0XDthO9rUd9e9gImccynAkRm+EAjWzMIbddcW+Qg8dCMQ6iuB3TW3rHwEHrkWQJt9JbCjehKeaoHtVd+C5x+hm7IwXwns1t60Pd2L+JNRHovYTI642UY7fSVwRDc8z0NAduZJ8A+5Z6Geif/jvF4RiEROy3D+puiPvrG4Eii/0DjqXoALVDiDnx0PBhWthENXs6HDGHtJbIGTnfX97u6Arq/iuHsBQBjMsntL4DYzCfRYOGQbDjvg7c2jlZaL11/bJhZ8W496Z2SNyeoK/vVas4XiKH5P88BENtrhfzdthrNMwjL4ylaPJi9wXIrHjwcpjpIeafxswd3VL2lrm+A9KXCBL98df+GvEjrdKfxSP2YTZjyRoDhKmt/SM+d2/6+egsbuylhBkzcwihlX8CvvRP/X4VuFwvfeiNhe1lX3E5/d51hz75zQ+RE9FvZKPq208pHIp5WWzq/2DlCDKXJ38w6PRW1qZ/b15RmU1pyRHDja2uH2FEp9ekrQl+dyutmY1iweAitFGljFdJdxL6VnIw5cGdsVdJkL2zJgjEq8aNxTV8ckTNpfs3JM1kgOFPZQsLXqO6cC77c3dSNPomPjpvkKeNKiwXLYWX1nFfy7TQM/Ik+j10fINHTqfW9IFH5RCJG1Jgd8ev2Xv53o6hJ0cHxiOG7HczVM4oI3JI7pc0HVemGeGq4MEgV+hYT8LBM/K2RN/J+eYxXTRmPo+v3m7jNGNecaMq2iX3lDprWXjWlG3sgwvSe0gY2beseQ5TF4ztXDjqt++caru5C3MzQWGdvM7L9VZDj4WCh4AZ3xuJGJm/icifb+n3xrowck6WeiC1uN+0a1TOLPajptUWVQWu13yH4IzDVk2tSGtMWqa8nzLex+ts8YU2Afg/zxxx/kaf4GzSVnCicBYF0AAAAASUVORK5CYII=";
+
   @override
   Widget build(BuildContext context) {
-    return CustomPaint(
-      size: Size(size, size),
-      painter: _GoogleLogoPainter(),
+    return Image.memory(
+      base64Decode(_base64),
+      width: size,
+      height: size,
     );
   }
-}
-
-class _GoogleLogoPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2;
-    final paint = Paint()..style = PaintingStyle.fill;
-
-    // Draw arcs for each color segment
-    final segments = [
-      // blue
-      (_deg(330), _deg(90), const Color(0xFF4285F4)),
-      // red
-      (_deg(210), _deg(120), const Color(0xFFEA4335)),
-      // yellow
-      (_deg(150), _deg(60), const Color(0xFFFBBC05)),
-      // green
-      (_deg(90), _deg(60), const Color(0xFF34A853)),
-    ];
-
-    for (final (start, sweep, color) in segments) {
-      paint.color = color;
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius),
-        start,
-        sweep,
-        true,
-        paint,
-      );
-    }
-
-    // White cutout in the center
-    paint.color = Colors.white;
-    canvas.drawCircle(center, radius * 0.6, paint);
-
-    // Blue right bar of the "G"
-    paint.color = const Color(0xFF4285F4);
-    canvas.drawRect(
-      Rect.fromLTWH(center.dx, center.dy - radius * 0.18,
-          radius + 2, radius * 0.36),
-      paint,
-    );
-
-    // Re-draw white inner circle to clean up
-    canvas.drawCircle(center, radius * 0.58, paint..color = Colors.white);
-
-    // "G" body
-    paint.color = const Color(0xFF4285F4);
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: radius * 0.58),
-      _deg(-15),
-      _deg(205),
-      false,
-      paint
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = radius * 0.3,
-    );
-
-    // Right part of "G"
-    paint
-      ..style = PaintingStyle.fill
-      ..color = const Color(0xFF4285F4);
-    canvas.drawRect(
-      Rect.fromLTWH(
-        center.dx - radius * 0.05,
-        center.dy - radius * 0.15,
-        radius * 0.6,
-        radius * 0.3,
-      ),
-      paint,
-    );
-  }
-
-  double _deg(double deg) => deg * 3.14159265358979 / 180;
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
