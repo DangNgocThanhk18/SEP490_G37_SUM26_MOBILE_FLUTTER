@@ -78,24 +78,26 @@ class MainActivity : FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             OFFLINE_SECURITY_CHANNEL,
         ).setMethodCallHandler { call, result ->
+            if (call.method == "isSupported") {
+                result.success(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                return@setMethodCallHandler
+            }
             offlineCryptoExecutor.execute {
               try {
                 when (call.method) {
-                    "isSupported" -> result.success(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
                     "getOrCreateIdentity" -> {
                         val scope = requiredText(call.argument<String>("accountScope"), "accountScope")
                         val keyPair = getOrCreateOfflineKeyPair(scope)
                         val encoded = keyPair.public.encoded
-                        result.success(
-                            mapOf(
-                                "publicKey" to Base64.encodeToString(encoded, Base64.NO_WRAP),
-                                "publicKeySha256" to sha256Hex(encoded),
-                                "deviceName" to listOf(Build.MANUFACTURER, Build.MODEL)
-                                    .filter { it.isNotBlank() }
-                                    .joinToString(" ")
-                                    .ifBlank { "Android device" },
-                            ),
+                        val response = mapOf(
+                            "publicKey" to Base64.encodeToString(encoded, Base64.NO_WRAP),
+                            "publicKeySha256" to sha256Hex(encoded),
+                            "deviceName" to listOf(Build.MANUFACTURER, Build.MODEL)
+                                .filter { it.isNotBlank() }
+                                .joinToString(" ")
+                                .ifBlank { "Android device" },
                         )
+                        runOnUiThread { result.success(response) }
                     }
                     "signEnrollmentChallenge" -> {
                         val scope = requiredText(call.argument<String>("accountScope"), "accountScope")
@@ -117,7 +119,8 @@ class MainActivity : FlutterActivity() {
                         )
                         signature.initSign(privateKey)
                         signature.update(challenge)
-                        result.success(signature.sign())
+                        val bytes = signature.sign()
+                        runOnUiThread { result.success(bytes) }
                     }
                     "decryptPage" -> {
                         val scope = requiredText(call.argument<String>("accountScope"), "accountScope")
@@ -152,7 +155,7 @@ class MainActivity : FlutterActivity() {
                         )
                         unwrapCipher.init(Cipher.DECRYPT_MODE, privateKey, oaep)
                         val contentKey = unwrapCipher.doFinal(decodeBase64Url(wrappedContentKey))
-                        try {
+                        val decryptedPage = try {
                             require(contentKey.size == 32) { "Content key must be AES-256" }
                             val pageCipher = Cipher.getInstance("AES/GCM/NoPadding")
                             pageCipher.init(
@@ -161,36 +164,40 @@ class MainActivity : FlutterActivity() {
                                 GCMParameterSpec(128, nonce),
                             )
                             pageCipher.updateAAD(aad)
-                            result.success(pageCipher.doFinal(encryptedPage))
+                            pageCipher.doFinal(encryptedPage)
                         } finally {
                             contentKey.fill(0)
                         }
+                        runOnUiThread { result.success(decryptedPage) }
                     }
-                    "readClock" -> result.success(
-                        mapOf(
+                    "readClock" -> {
+                        val clockData = mapOf(
                             "elapsedRealtimeMillis" to SystemClock.elapsedRealtime(),
                             "bootCount" to Settings.Global.getInt(
                                 contentResolver,
                                 Settings.Global.BOOT_COUNT,
                                 -1,
                             ),
-                        ),
-                    )
+                        )
+                        runOnUiThread { result.success(clockData) }
+                    }
                     "deleteIdentity" -> {
                         val scope = requiredText(call.argument<String>("accountScope"), "accountScope")
                         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
                         val alias = offlineKeyAlias(scope)
                         if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias)
-                        result.success(null)
+                        runOnUiThread { result.success(null) }
                     }
-                    else -> result.notImplemented()
+                    else -> runOnUiThread { result.notImplemented() }
                 }
               } catch (error: Throwable) {
-                result.error(
-                    "offline_security_error",
-                    error.message ?: "Offline security operation failed",
-                    null,
-                )
+                runOnUiThread {
+                    result.error(
+                        "offline_security_error",
+                        error.message ?: "Offline security operation failed",
+                        null,
+                    )
+                }
               }
             }
         }

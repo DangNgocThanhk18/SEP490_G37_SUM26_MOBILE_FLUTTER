@@ -27,7 +27,11 @@ class Ed25519OfflineLicenseVerifier implements OfflineLicenseVerifier {
     String? signingKeyId,
   }) : _configuredPublicKey =
            publicKey ??
-           const String.fromEnvironment('OFFLINE_LICENSE_ED25519_PUBLIC_KEY'),
+           const String.fromEnvironment(
+             'OFFLINE_LICENSE_ED25519_PUBLIC_KEY',
+             defaultValue:
+                 'MCowBQYDK2VwAyEAZuMBZcxZCILZRAEJOxCMylBxw8rRuyQnRz+LzBJJaS8=',
+           ),
        _issuer = issuer,
        _audience = audience,
        _signingKeyId =
@@ -299,6 +303,10 @@ class OfflineDownloadService extends ChangeNotifier {
         deviceKeyId: device.deviceKeyId,
       );
     } on ApiException catch (error) {
+      // Device not found on server → clear enrollment so next attempt re-enrolls
+      if (error.statusCode == 404 || error.statusCode == 403) {
+        await secureStorage.delete(_deviceRegistrationKey(account));
+      }
       throw _mapApiException(error);
     }
 
@@ -623,8 +631,14 @@ class OfflineDownloadService extends ChangeNotifier {
               publicKeySha256: identity.publicKeySha256,
             );
           }
+        } else {
+          // Key changed (app reinstalled / keystore cleared) – clear stale record
+          // so we always re-enroll with the current key.
+          await secureStorage.delete(_deviceRegistrationKey(account));
         }
-      } catch (_) {}
+      } catch (_) {
+        await secureStorage.delete(_deviceRegistrationKey(account));
+      }
     }
 
     try {
@@ -682,39 +696,67 @@ class OfflineDownloadService extends ChangeNotifier {
     required String chapterId,
     required OfflinePackageHeaders header,
   }) {
-    if (claims.formatVersion != 1 ||
-        claims.userId != account ||
-        claims.chapterId != chapterId ||
-        claims.deviceIdHash !=
-            sha256.convert(utf8.encode(deviceId)).toString() ||
-        claims.deviceKeyId != deviceKeyId ||
-        claims.deviceKeySha256 != identity.publicKeySha256 ||
-        claims.packageId != header.packageId ||
-        claims.deviceKeyId != header.deviceKeyId ||
-        claims.packageSha256 != header.packageSha256.toLowerCase() ||
-        claims.manifestSha256 != header.manifestSha256.toLowerCase() ||
-        claims.keyAlgorithm != header.keyAlgorithm ||
-        claims.formatVersion != header.formatVersion ||
-        claims.signingKeyId != header.signingKeyId ||
-        claims.wrappedKeySha256 !=
-            sha256
-                .convert(decodeBase64Url(header.wrappedContentKey))
-                .toString() ||
-        claims.expiresAt != header.expiresAt ||
-        claims.notBefore.isAfter(
-          claims.serverTime.add(const Duration(seconds: 30)),
-        ) ||
-        claims.issuedAt.difference(claims.serverTime).abs() >
-            const Duration(minutes: 1) ||
-        claims.offlineUntil.isAfter(claims.expiresAt) ||
-        claims.offlineUntil.difference(claims.issuedAt) >
-            maximumOfflinePeriod ||
-        header.serverTime.difference(claims.serverTime).abs() >
-            const Duration(minutes: 1)) {
-      throw const OfflineDownloadException(
-        'invalid_license',
-        'The offline license does not match this account, device, or chapter.',
+    void fail(String detail) => throw OfflineDownloadException(
+      'invalid_license',
+      'License mismatch: $detail',
+    );
+
+    if (claims.formatVersion != 1) fail('formatVersion');
+    if (claims.userId != account) fail('userId');
+    if (claims.chapterId != chapterId) fail('chapterId');
+    final expectedDeviceIdHash =
+        sha256.convert(utf8.encode(deviceId)).toString();
+    if (claims.deviceIdHash != expectedDeviceIdHash) fail('deviceIdHash');
+    if (claims.deviceKeyId != deviceKeyId) fail('deviceKeyId');
+    if (claims.deviceKeySha256 != identity.publicKeySha256) {
+      fail(
+        'deviceKeySha256: claims=${claims.deviceKeySha256} vs local=${identity.publicKeySha256}',
       );
+    }
+    if (claims.packageId != header.packageId) fail('packageId');
+    if (claims.deviceKeyId != header.deviceKeyId) fail('header.deviceKeyId');
+    if (claims.packageSha256 != header.packageSha256.toLowerCase()) {
+      fail('packageSha256');
+    }
+    if (claims.manifestSha256 != header.manifestSha256.toLowerCase()) {
+      fail('manifestSha256');
+    }
+    if (claims.keyAlgorithm != header.keyAlgorithm) fail('keyAlgorithm');
+    if (claims.formatVersion != header.formatVersion) {
+      fail('header.formatVersion');
+    }
+    if (claims.signingKeyId != header.signingKeyId) fail('signingKeyId');
+    final computedWrappedKeySha256 =
+        sha256.convert(decodeBase64Url(header.wrappedContentKey)).toString();
+    if (claims.wrappedKeySha256 != computedWrappedKeySha256) {
+      fail(
+        'wrappedKeySha256: claims=${claims.wrappedKeySha256} vs computed=$computedWrappedKeySha256',
+      );
+    }
+    if (claims.expiresAt.difference(header.expiresAt).abs() >
+        const Duration(seconds: 2)) {
+      fail('expiresAt');
+    }
+    if (claims.notBefore.isAfter(
+      claims.serverTime.add(const Duration(seconds: 30)),
+    )) {
+      fail('notBefore');
+    }
+    if (claims.issuedAt.difference(claims.serverTime).abs() >
+        const Duration(minutes: 1)) {
+      fail('issuedAt vs serverTime clock drift');
+    }
+    if (claims.offlineUntil.isAfter(
+      claims.expiresAt.add(const Duration(seconds: 2)),
+    )) {
+      fail('offlineUntil > expiresAt');
+    }
+    if (claims.offlineUntil.difference(claims.issuedAt) > maximumOfflinePeriod) {
+      fail('offlineUntil period too long');
+    }
+    if (header.serverTime.difference(claims.serverTime).abs() >
+        const Duration(minutes: 1)) {
+      fail('header.serverTime vs claims.serverTime');
     }
   }
 
@@ -1006,6 +1048,9 @@ class OfflineDownloadService extends ChangeNotifier {
   }
 
   OfflineDownloadException _mapApiException(ApiException error) {
+    debugPrint(
+      'MAP_API_EXCEPTION: statusCode=${error.statusCode}, code=${error.code}, message=${error.message}',
+    );
     final code = error.code?.toUpperCase();
     if (error.statusCode == 403 && code != 'PREMIUM_REQUIRED') {
       return OfflineDownloadException(
@@ -1017,31 +1062,31 @@ class OfflineDownloadService extends ChangeNotifier {
       );
     }
     if (error.statusCode == 409 && code == 'OFFLINE_PACKAGE_OUTDATED') {
-      return const OfflineDownloadException(
+      return OfflineDownloadException(
         'redownload_required',
-        'This chapter changed and must be downloaded again.',
+        error.message,
       );
     }
     return switch (error.statusCode) {
-      401 => const OfflineDownloadException(
+      401 => OfflineDownloadException(
         'authentication_required',
-        'Your session expired. Sign in again before downloading.',
+        error.message,
       ),
-      403 => const OfflineDownloadException(
+      403 => OfflineDownloadException(
         'premium_required',
-        'An active Premium subscription is required for offline downloads.',
+        error.message,
       ),
-      404 => const OfflineDownloadException(
+      404 => OfflineDownloadException(
         'not_found',
-        'This chapter is no longer available for download.',
+        error.message,
       ),
-      413 => const OfflineDownloadException(
+      413 => OfflineDownloadException(
         'too_large',
-        'This chapter is too large to download safely.',
+        error.message,
       ),
-      429 => const OfflineDownloadException(
+      429 => OfflineDownloadException(
         'rate_limited',
-        'Too many download attempts. Please wait and try again.',
+        error.message,
       ),
       _ => OfflineDownloadException('network_error', error.message),
     };

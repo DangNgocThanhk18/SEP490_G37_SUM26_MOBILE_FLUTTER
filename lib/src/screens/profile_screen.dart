@@ -669,7 +669,7 @@ class _ProfileIdentityHeader extends StatelessWidget {
               borderRadius: BorderRadius.circular(999),
             ),
             child: Text(
-              user.role ?? 'READER',
+              user.displayRole(context),
               style: Theme.of(context).textTheme.labelMedium,
             ),
           ),

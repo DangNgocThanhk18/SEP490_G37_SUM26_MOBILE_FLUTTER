@@ -1,3 +1,7 @@
+import 'package:flutter/material.dart';
+
+import '../l10n/app_localizations.dart';
+
 class UserProfile {
   const UserProfile({
     this.userId,
@@ -35,13 +39,34 @@ class UserProfile {
     return username;
   }
 
+  String displayRole(BuildContext context) {
+    final clean = (role ?? 'READER').trim().toUpperCase();
+    final key = switch (clean) {
+      'READER' || 'ROLE_READER' => 'Reader',
+      'TRANSLATOR' || 'ROLE_TRANSLATOR' => 'Translator',
+      'PROJECT_LEADER' || 'ROLE_PROJECT_LEADER' => 'Project Leader',
+      'STAFF' || 'ROLE_STAFF' => 'Staff',
+      'ADMIN' || 'ROLE_ADMIN' => 'Administrator',
+      _ => clean,
+    };
+    return context.tr(key);
+  }
+
   factory UserProfile.fromJson(Map<String, dynamic> json) {
+    String? roleStr;
+    final rawRole = json['role'];
+    if (rawRole is Map<String, dynamic>) {
+      roleStr = (rawRole['roleName'] ?? rawRole['name'])?.toString();
+    } else if (rawRole != null) {
+      roleStr = rawRole.toString();
+    }
+
     return UserProfile(
       userId: json['userId']?.toString(),
       username: (json['username'] ?? 'reader').toString(),
       email: (json['email'] ?? '').toString(),
       fullName: json['fullName']?.toString(),
-      role: json['role']?.toString(),
+      role: roleStr,
       avatarUrl: json['avatarUrl']?.toString(),
       backgroundImageUrl: json['backgroundImageUrl']?.toString(),
       dateOfBirth: DateTime.tryParse((json['dateOfBirth'] ?? '').toString()),
@@ -71,3 +96,4 @@ class UserProfile {
     };
   }
 }
+

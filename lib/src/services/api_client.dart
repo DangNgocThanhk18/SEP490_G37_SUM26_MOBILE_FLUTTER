@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
@@ -944,7 +945,11 @@ class ApiClient {
           .timeout(const Duration(minutes: 5));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final body = await utf8.decoder.bind(response.stream).join();
-        var message = 'Offline chapter download failed.';
+        debugPrint(
+          'DOWNLOAD_ERROR: HTTP ${response.statusCode}, headers=${response.headers}, body=$body',
+        );
+        var message =
+            'Offline chapter download failed (HTTP ${response.statusCode}).';
         String? code;
         try {
           final decoded = jsonDecode(body);
@@ -966,17 +971,19 @@ class ApiClient {
           code: code,
         );
       }
-      if ((response.headers['content-type'] ?? '').toLowerCase().startsWith(
-            'application/vnd.comiverse.cvpack',
-          ) ==
-          false) {
-        throw const ApiException(
-          'Backend returned an invalid offline package content type.',
+      final contentType = response.headers['content-type'] ?? '';
+      if (!contentType.toLowerCase().startsWith('application/vnd.comiverse.cvpack')) {
+        debugPrint(
+          'DOWNLOAD_HEADER_ERROR: content-type="$contentType", all headers=${response.headers}',
+        );
+        throw ApiException(
+          'Backend returned an invalid offline package content type: $contentType',
         );
       }
       String requiredHeader(String name) {
         final value = response.headers[name.toLowerCase()]?.trim() ?? '';
         if (value.isEmpty) {
+          debugPrint('DOWNLOAD_HEADER_MISSING: missing $name in ${response.headers}');
           throw ApiException('Backend did not return the $name header.');
         }
         return value;
