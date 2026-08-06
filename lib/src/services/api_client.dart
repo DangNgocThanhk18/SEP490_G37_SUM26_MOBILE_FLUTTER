@@ -206,6 +206,80 @@ class ApiClient {
     return LoginResult(token: token, refreshToken: refreshToken, user: user);
   }
 
+  /// Sign in with a Google ID Token obtained from the google_sign_in package.
+  Future<LoginResult> loginWithGoogle(String idToken) async {
+    _clearReadCache();
+    final json = await _request(
+      'POST',
+      '/auth/google-login',
+      body: {'idToken': idToken},
+      authorized: false,
+    );
+
+    final token = (json['token'] ?? '').toString();
+    final refreshToken = (json['refreshToken'] ?? '').toString();
+    if (token.isEmpty) {
+      throw const ApiException('Google sign-in did not return an access token.');
+    }
+
+    _token = token;
+    _refreshToken = refreshToken;
+    final user = await getMe();
+    _currentUser = user;
+    await Future.wait([
+      _sessionStorage.write(_accessTokenKey, token),
+      _sessionStorage.write(_refreshTokenKey, refreshToken),
+      _sessionStorage.write(_profileKey, jsonEncode(user.toJson())),
+    ]);
+    return LoginResult(token: token, refreshToken: refreshToken, user: user);
+  }
+
+  /// Register a new account. After success the user must verify their email
+  /// with [verifyEmail] before they can sign in.
+  Future<void> register({
+    required String username,
+    required String fullName,
+    required String email,
+    required String password,
+    String? phone,
+  }) async {
+    await _request(
+      'POST',
+      '/auth/register',
+      body: {
+        'username': username.trim(),
+        'fullName': fullName.trim(),
+        'email': email.trim(),
+        'password': password,
+        if (phone != null && phone.trim().isNotEmpty) 'phone': phone.trim(),
+      },
+      authorized: false,
+    );
+  }
+
+  /// Verify the OTP code sent to [email] after registration.
+  Future<void> verifyEmail({
+    required String email,
+    required String otp,
+  }) async {
+    await _request(
+      'POST',
+      '/auth/verify-email',
+      body: {'email': email.trim(), 'otp': otp.trim()},
+      authorized: false,
+    );
+  }
+
+  /// Resend the email-verification OTP to [email].
+  Future<void> resendVerificationOtp(String email) async {
+    await _request(
+      'POST',
+      '/auth/resend-verification-otp',
+      body: {'email': email.trim()},
+      authorized: false,
+    );
+  }
+
   Future<UserProfile> getMe() async {
     final json = await _request('GET', '/auth/me');
     final data = _unwrapData(json);
