@@ -932,7 +932,7 @@ class ApiClient {
     );
     final request = http.Request('POST', uri)
       ..headers['Content-Type'] = 'application/json'
-      ..headers['Accept'] = 'application/vnd.comiverse.cvpack'
+      ..headers['Accept'] = 'application/vnd.comiverse.cvpack, application/json'
       ..headers['Accept-Language'] = _languageCode
       ..headers['Authorization'] = 'Bearer $_token'
       ..body = jsonEncode({'deviceKeyId': deviceKeyId});
