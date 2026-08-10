@@ -519,7 +519,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
       if (!mounted) return;
       _showMessage(
         context.tr(
-          'Secure offline downloads are available in the configured Android app.',
+          'Secure offline downloads are available in the configured Android and iOS apps.',
         ),
         type: InAppNotificationType.information,
       );

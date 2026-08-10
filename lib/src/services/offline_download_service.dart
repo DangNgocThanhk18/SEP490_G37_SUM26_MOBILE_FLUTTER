@@ -144,7 +144,7 @@ class OfflineDownloadService extends ChangeNotifier {
     OfflineLicenseVerifier? licenseVerifier,
   }) : store = store ?? const PrivateOfflineDownloadStore(),
        platformSecurity =
-           platformSecurity ?? const AndroidOfflinePlatformSecurity(),
+           platformSecurity ?? const NativeOfflinePlatformSecurity(),
        secureStorage = secureStorage ?? const SecureSessionStorage(),
        licenseVerifier = licenseVerifier ?? Ed25519OfflineLicenseVerifier();
 
@@ -297,7 +297,7 @@ class OfflineDownloadService extends ChangeNotifier {
     if (!await isSupported) {
       throw const OfflineDownloadException(
         'unsupported',
-        'Secure offline downloads are only available in a configured Android build.',
+        'Secure offline downloads are only available in a configured Android or iOS build.',
       );
     }
     final deviceId = await _getOrCreateDeviceId();

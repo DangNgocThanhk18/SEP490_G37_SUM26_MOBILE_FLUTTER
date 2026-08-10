@@ -4,7 +4,7 @@ class OfflinePlatformIdentity {
   const OfflinePlatformIdentity({
     required this.publicKeyX509Base64,
     required this.publicKeySha256,
-    this.deviceName = 'Android device',
+    this.deviceName = 'Mobile device',
   });
 
   final String publicKeyX509Base64;
@@ -46,8 +46,8 @@ abstract interface class OfflinePlatformSecurity {
   Future<void> deleteIdentity(String accountScope);
 }
 
-class AndroidOfflinePlatformSecurity implements OfflinePlatformSecurity {
-  const AndroidOfflinePlatformSecurity({MethodChannel? channel})
+class NativeOfflinePlatformSecurity implements OfflinePlatformSecurity {
+  const NativeOfflinePlatformSecurity({MethodChannel? channel})
     : _channel = channel ?? const MethodChannel(_channelName);
 
   static const _channelName = 'comiverse/offline_security';
@@ -70,13 +70,13 @@ class AndroidOfflinePlatformSecurity implements OfflinePlatformSecurity {
     if (publicKey.isEmpty || fingerprint.isEmpty) {
       throw PlatformException(
         code: 'identity_unavailable',
-        message: 'Android Keystore did not return a device identity.',
+        message: 'The device security provider did not return an identity.',
       );
     }
     return OfflinePlatformIdentity(
       publicKeyX509Base64: publicKey,
       publicKeySha256: fingerprint.toLowerCase(),
-      deviceName: result?['deviceName']?.toString() ?? 'Android device',
+      deviceName: result?['deviceName']?.toString() ?? 'Mobile device',
     );
   }
 
@@ -92,7 +92,7 @@ class AndroidOfflinePlatformSecurity implements OfflinePlatformSecurity {
     if (result == null || result.isEmpty) {
       throw PlatformException(
         code: 'signing_failed',
-        message: 'Android Keystore did not sign the device challenge.',
+        message: 'The device security provider did not sign the challenge.',
       );
     }
     return result;
@@ -132,7 +132,7 @@ class AndroidOfflinePlatformSecurity implements OfflinePlatformSecurity {
     if (elapsed is! num || bootCount is! num) {
       throw PlatformException(
         code: 'trusted_clock_unavailable',
-        message: 'A trusted Android clock is unavailable.',
+        message: 'A trusted device clock is unavailable.',
       );
     }
     return OfflinePlatformClock(

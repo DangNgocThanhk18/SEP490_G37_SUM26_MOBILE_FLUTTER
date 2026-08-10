@@ -138,8 +138,8 @@ const Map<String, String> _vietnamese = {
   'Download': 'Tải xuống',
   'Downloads': 'Nội dung đã tải',
   'Encrypted Premium chapters': 'Chương Premium được mã hóa',
-  'Secure offline downloads are available in the configured Android app.':
-      'Tải xuống ngoại tuyến an toàn chỉ khả dụng trên bản Android đã được cấu hình.',
+  'Secure offline downloads are available in the configured Android and iOS apps.':
+      'Tải xuống ngoại tuyến an toàn khả dụng trên ứng dụng Android và iOS đã được cấu hình.',
   'Download chapters': 'Tải chương truyện',
   'Premium is verified by the server. Offline access must be renewed every 7 days.':
       'Premium được máy chủ xác minh. Quyền đọc ngoại tuyến phải được gia hạn mỗi 7 ngày.',

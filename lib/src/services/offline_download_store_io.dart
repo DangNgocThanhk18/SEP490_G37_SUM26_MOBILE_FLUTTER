@@ -11,7 +11,7 @@ class PrivateOfflineDownloadStore implements OfflineDownloadStore {
   const PrivateOfflineDownloadStore();
 
   @override
-  Future<bool> isSupported() async => Platform.isAndroid;
+  Future<bool> isSupported() async => Platform.isAndroid || Platform.isIOS;
 
   @override
   Future<StagedOfflinePackage> stagePackage({

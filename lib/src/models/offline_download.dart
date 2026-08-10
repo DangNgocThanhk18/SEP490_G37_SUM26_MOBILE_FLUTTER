@@ -91,7 +91,7 @@ class OfflineRegisteredDevice {
   factory OfflineRegisteredDevice.fromJson(Map<String, dynamic> json) =>
       OfflineRegisteredDevice(
         deviceKeyId: _requiredText(json, 'deviceKeyId'),
-        deviceName: (json['deviceName'] ?? 'Android device').toString(),
+        deviceName: (json['deviceName'] ?? 'Mobile device').toString(),
         publicKeySha256: _requiredText(json, 'publicKeySha256').toLowerCase(),
         revoked: json['revoked'] == true,
         enrolledAt: DateTime.tryParse(

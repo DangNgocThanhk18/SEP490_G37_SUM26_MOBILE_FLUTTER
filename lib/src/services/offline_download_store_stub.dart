@@ -9,7 +9,7 @@ class PrivateOfflineDownloadStore implements OfflineDownloadStore {
   Future<bool> isSupported() async => false;
 
   Never _unsupported() => throw UnsupportedError(
-    'Encrypted offline downloads are only supported by the Android app.',
+    'Encrypted offline downloads are only supported by the Android and iOS apps.',
   );
 
   @override
