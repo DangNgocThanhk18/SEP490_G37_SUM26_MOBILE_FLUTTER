@@ -12,11 +12,12 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
-    ScreenCaptureProtectionPlugin.register(
-      with: engineBridge.pluginRegistry.registrar(
-        forPlugin: "ScreenCaptureProtectionPlugin"
-      )
-    )
+    guard let registrar = engineBridge.pluginRegistry.registrar(
+      forPlugin: "ScreenCaptureProtectionPlugin"
+    ) else {
+      return
+    }
+    ScreenCaptureProtectionPlugin.register(with: registrar)
   }
 }
 
