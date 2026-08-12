@@ -10,6 +10,7 @@ import '../models/comic.dart';
 import '../models/notification_destination.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
+import '../services/application_badge.dart';
 import '../services/app_preferences.dart';
 import '../services/offline_download_service.dart';
 import '../services/push_notifications.dart';
@@ -141,16 +142,12 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
 
   Future<void> _loadUnreadCount() async {
     if (!widget.apiClient.hasToken) {
-      if (mounted && _unreadCount != 0) {
-        setState(() => _unreadCount = 0);
-      }
+      _applyUnreadCount(0);
       return;
     }
     try {
       final count = await widget.apiClient.getUnreadNotificationCount();
-      if (mounted && count != _unreadCount) {
-        setState(() => _unreadCount = count);
-      }
+      _applyUnreadCount(count);
     } catch (_) {
       // The destination remains usable and exposes its own retry state.
     }
@@ -175,8 +172,14 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   }
 
   void _setUnreadCount(int count) {
-    if (mounted && count != _unreadCount) {
-      setState(() => _unreadCount = count);
+    _applyUnreadCount(count);
+  }
+
+  void _applyUnreadCount(int count) {
+    final normalized = count < 0 ? 0 : count;
+    unawaited(ApplicationBadge.setCount(normalized));
+    if (mounted && normalized != _unreadCount) {
+      setState(() => _unreadCount = normalized);
     }
   }
 

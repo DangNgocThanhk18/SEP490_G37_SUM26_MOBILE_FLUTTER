@@ -3,6 +3,7 @@ import Darwin
 import Flutter
 import Security
 import UIKit
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -24,6 +25,65 @@ import UIKit
       forPlugin: "OfflineSecurityPlugin"
     ) {
       OfflineSecurityPlugin.register(with: registrar)
+    }
+    if let registrar = engineBridge.pluginRegistry.registrar(
+      forPlugin: "ApplicationBadgePlugin"
+    ) {
+      ApplicationBadgePlugin.register(with: registrar)
+    }
+  }
+}
+
+private final class ApplicationBadgePlugin: NSObject, FlutterPlugin {
+  private static let channelName = "comiverse/application_badge"
+
+  static func register(with registrar: FlutterPluginRegistrar) {
+    let channel = FlutterMethodChannel(
+      name: channelName,
+      binaryMessenger: registrar.messenger()
+    )
+    registrar.addMethodCallDelegate(ApplicationBadgePlugin(), channel: channel)
+  }
+
+  func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard call.method == "setCount" else {
+      result(FlutterMethodNotImplemented)
+      return
+    }
+    guard let arguments = call.arguments as? [String: Any],
+          let count = arguments["count"] as? Int else {
+      result(
+        FlutterError(
+          code: "invalid_argument",
+          message: "setCount expects a non-negative integer.",
+          details: nil
+        )
+      )
+      return
+    }
+
+    let normalizedCount = max(0, count)
+    if #available(iOS 16.0, *) {
+      UNUserNotificationCenter.current().setBadgeCount(normalizedCount) { error in
+        DispatchQueue.main.async {
+          if let error {
+            result(
+              FlutterError(
+                code: "badge_update_failed",
+                message: error.localizedDescription,
+                details: nil
+              )
+            )
+          } else {
+            result(nil)
+          }
+        }
+      }
+    } else {
+      DispatchQueue.main.async {
+        UIApplication.shared.applicationIconBadgeNumber = normalizedCount
+        result(nil)
+      }
     }
   }
 }

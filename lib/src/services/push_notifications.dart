@@ -5,6 +5,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/app_notification.dart';
+import 'application_badge.dart';
 import 'api_client.dart';
 import 'firebase_runtime_options.dart';
 
@@ -30,12 +31,16 @@ class FirebasePushNotifications implements PushNotificationCoordinator {
   StreamSubscription<RemoteMessage>? _foregroundSubscription;
   StreamSubscription<RemoteMessage>? _openedSubscription;
   StreamSubscription<String>? _tokenSubscription;
+  Timer? _iosRegistrationRetryTimer;
   FirebaseMessaging? _messaging;
   ApiClient? _authenticatedApiClient;
   AppNotification? _pendingOpenedNotification;
   String? _currentToken;
   bool _initialized = false;
   bool _available = false;
+  int _iosRegistrationRetryAttempt = 0;
+
+  static const int _maximumIosRegistrationRetries = 6;
 
   @override
   Stream<AppNotification> get foregroundNotifications =>
@@ -61,7 +66,7 @@ class FirebasePushNotifications implements PushNotificationCoordinator {
       await messaging.setAutoInitEnabled(true);
       await messaging.setForegroundNotificationPresentationOptions(
         alert: false,
-        badge: false,
+        badge: true,
         sound: false,
       );
       _foregroundSubscription = FirebaseMessaging.onMessage.listen((message) {
@@ -103,21 +108,65 @@ class FirebasePushNotifications implements PushNotificationCoordinator {
         badge: true,
         sound: true,
       );
-      if (permission.authorizationStatus == AuthorizationStatus.denied) return;
-      if (defaultTargetPlatform == TargetPlatform.iOS &&
-          !await _waitForApnsToken()) {
-        debugPrint(
-          'APNs token is not available yet; FCM sync will retry later.',
-        );
+      if (permission.authorizationStatus == AuthorizationStatus.denied) {
+        _cancelIosRegistrationRetry();
         return;
       }
-      final token = await _messaging?.getToken();
-      if (token == null || token.trim().isEmpty) return;
-      _currentToken = token;
-      await _registerToken(apiClient, token);
+      await _registerCurrentDevice(apiClient);
     } catch (error) {
       debugPrint('Could not register this device for push: $error');
+      _scheduleIosRegistrationRetry(apiClient);
     }
+  }
+
+  Future<void> _registerCurrentDevice(ApiClient apiClient) async {
+    if (_authenticatedApiClient != apiClient || !apiClient.hasToken) return;
+    if (defaultTargetPlatform == TargetPlatform.iOS &&
+        !await _waitForApnsToken()) {
+      debugPrint('APNs token is not available yet; scheduling FCM retry.');
+      _scheduleIosRegistrationRetry(apiClient);
+      return;
+    }
+    try {
+      final token = await _messaging?.getToken();
+      if (token == null || token.trim().isEmpty) {
+        _scheduleIosRegistrationRetry(apiClient);
+        return;
+      }
+      _currentToken = token;
+      await _registerToken(apiClient, token);
+      _cancelIosRegistrationRetry();
+    } catch (error) {
+      debugPrint('Could not sync the FCM token: $error');
+      _scheduleIosRegistrationRetry(apiClient);
+    }
+  }
+
+  void _scheduleIosRegistrationRetry(ApiClient apiClient) {
+    if (defaultTargetPlatform != TargetPlatform.iOS ||
+        _authenticatedApiClient != apiClient ||
+        !apiClient.hasToken ||
+        _iosRegistrationRetryAttempt >= _maximumIosRegistrationRetries) {
+      return;
+    }
+    _iosRegistrationRetryTimer?.cancel();
+    final delaySeconds = switch (_iosRegistrationRetryAttempt) {
+      0 => 2,
+      1 => 5,
+      2 => 10,
+      _ => 20,
+    };
+    _iosRegistrationRetryAttempt++;
+    _iosRegistrationRetryTimer = Timer(
+      Duration(seconds: delaySeconds),
+      () => unawaited(_registerCurrentDevice(apiClient)),
+    );
+  }
+
+  void _cancelIosRegistrationRetry() {
+    _iosRegistrationRetryTimer?.cancel();
+    _iosRegistrationRetryTimer = null;
+    _iosRegistrationRetryAttempt = 0;
   }
 
   Future<void> _registerToken(ApiClient apiClient, String token) {
@@ -134,7 +183,9 @@ class FirebasePushNotifications implements PushNotificationCoordinator {
 
   @override
   Future<void> unregisterAuthenticatedUser(ApiClient apiClient) async {
+    _cancelIosRegistrationRetry();
     _authenticatedApiClient = null;
+    await ApplicationBadge.setCount(0);
     final messaging = _messaging;
     if (!_available || messaging == null) return;
     try {
@@ -171,6 +222,7 @@ class FirebasePushNotifications implements PushNotificationCoordinator {
 
   @override
   void dispose() {
+    _cancelIosRegistrationRetry();
     unawaited(_foregroundSubscription?.cancel());
     unawaited(_openedSubscription?.cancel());
     unawaited(_tokenSubscription?.cancel());

@@ -39,8 +39,8 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
   String? _error;
 
-  /// Lazily-created GoogleSignIn instance. We only sign in, not silently
-  /// restore, so no serverClientId is required for this flow.
+  /// iOS reads GIDClientID/GIDServerClientID from Runner/Info.plist. Android
+  /// reads the equivalent OAuth clients from google-services.json.
   static final _googleSignIn = GoogleSignIn(scopes: ["email", "profile"]);
 
   @override
