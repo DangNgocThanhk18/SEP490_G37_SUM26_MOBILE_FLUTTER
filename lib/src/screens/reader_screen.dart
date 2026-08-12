@@ -505,6 +505,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   int _zoomResetGeneration = 0;
   int _preloadAnchorPageIndex = -1;
   int _preloadGeneration = 0;
+  int _preloadWindowGeneration = 0;
   Future<void> _preloadQueue = Future<void>.value();
   late String? _selectedLanguage; // null = original (no bubble overlay)
   bool _captureProtectionAcquired = false;
@@ -530,6 +531,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   @override
   void dispose() {
     _preloadGeneration++;
+    _preloadWindowGeneration++;
     _releaseScrollHold();
     if (_captureProtectionAcquired) {
       _captureProtectionAcquired = false;
@@ -572,6 +574,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _pageAspectRatios.clear();
       _preloadAnchorPageIndex = -1;
       _preloadGeneration++;
+      _preloadWindowGeneration++;
       _preloadQueue = Future<void>.value();
       _futureChapter = _loadChapterDetail();
       _futureTranslations = widget.preferOffline
@@ -662,7 +665,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _preloadNearbyPages(List<String> urls, int pageIndex) {
-    final isOffline = urls.isNotEmpty && urls.first.startsWith('comiverse-offline://');
+    final isOffline =
+        urls.isNotEmpty && urls.first.startsWith('comiverse-offline://');
     final previousAnchor = _preloadAnchorPageIndex;
     if (previousAnchor >= 0 &&
         (pageIndex - previousAnchor).abs() <
@@ -671,6 +675,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
     final movingBackwards = previousAnchor >= 0 && pageIndex < previousAnchor;
     _preloadAnchorPageIndex = pageIndex;
+    final windowGeneration = ++_preloadWindowGeneration;
+    _activeImagePreloads.clear();
     final targets = ReaderImageLoadingPolicy.urlsAroundPage(
       urls,
       pageIndex,
@@ -682,11 +688,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (isOffline) {
         _preloadQueue = _preloadQueue.then(
-          (_) => _precacheOfflinePagesSequentially(targets, generation),
+          (_) => _precacheOfflinePagesSequentially(
+            targets,
+            generation,
+            windowGeneration,
+          ),
         );
       } else {
         _preloadQueue = _preloadQueue.then(
-          (_) => _precachePagesSequentially(targets, generation),
+          (_) =>
+              _precachePagesSequentially(targets, generation, windowGeneration),
         );
       }
     });
@@ -695,20 +706,35 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Future<void> _precacheOfflinePagesSequentially(
     List<String> urls,
     int generation,
+    int windowGeneration,
   ) async {
     for (final url in urls) {
-      if (!mounted || generation != _preloadGeneration) return;
+      if (!mounted ||
+          generation != _preloadGeneration ||
+          windowGeneration != _preloadWindowGeneration) {
+        return;
+      }
       try {
         final offlineService = widget.offlineDownloads;
         if (offlineService != null) {
           final bytes = await offlineService.readPage(url);
-          if (mounted && generation == _preloadGeneration) {
-            final cacheWidth = _readerImageCacheWidth(context);
-            await precacheImage(
-              ResizeImage.resizeIfNeeded(cacheWidth, null, MemoryImage(bytes)),
-              context,
-              onError: (_, _) {},
-            );
+          try {
+            if (mounted &&
+                generation == _preloadGeneration &&
+                windowGeneration == _preloadWindowGeneration) {
+              final cacheWidth = _readerImageCacheWidth(context);
+              await precacheImage(
+                ResizeImage.resizeIfNeeded(
+                  cacheWidth,
+                  null,
+                  MemoryImage(bytes),
+                ),
+                context,
+                onError: (_, _) {},
+              );
+            }
+          } finally {
+            offlineService.releasePageBytes(bytes);
           }
         }
       } catch (_) {
@@ -722,9 +748,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Future<void> _precachePagesSequentially(
     List<String> urls,
     int generation,
+    int windowGeneration,
   ) async {
     for (final url in urls) {
-      if (!mounted || generation != _preloadGeneration) return;
+      if (!mounted ||
+          generation != _preloadGeneration ||
+          windowGeneration != _preloadWindowGeneration) {
+        return;
+      }
       try {
         await precacheImage(
           _readerImageProvider(

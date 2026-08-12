@@ -39,11 +39,16 @@ private final class OfflineSecurityPlugin: NSObject, FlutterPlugin {
     qos: .userInitiated,
     attributes: .concurrent
   )
+  private let transientKeyLock = NSLock()
+  private var transientContentKeys: [String: SymmetricKey] = [:]
 
   static func register(with registrar: FlutterPluginRegistrar) {
+    let messenger = registrar.messenger()
     let channel = FlutterMethodChannel(
       name: channelName,
-      binaryMessenger: registrar.messenger()
+      binaryMessenger: messenger,
+      codec: FlutterStandardMethodCodec.sharedInstance(),
+      taskQueue: messenger.makeBackgroundTaskQueue()
     )
     registrar.addMethodCallDelegate(OfflineSecurityPlugin(), channel: channel)
   }
@@ -115,17 +120,10 @@ private final class OfflineSecurityPlugin: NSObject, FlutterPlugin {
                 encryptedPage.count <= Self.maximumEncryptedPageBytes else {
             throw OfflineSecurityError("The encrypted page has an invalid size.")
           }
-          let privateKey = try self.getOrCreatePrivateKey(accountScope: scope)
-          var contentKey = try self.unwrapContentKey(
-            wrappedContentKey,
-            privateKey: privateKey
+          let contentKey = try self.cachedContentKey(
+            accountScope: scope,
+            wrappedContentKey
           )
-          defer {
-            contentKey.resetBytes(in: 0..<contentKey.count)
-          }
-          guard contentKey.count == 32 else {
-            throw OfflineSecurityError("The content key is not AES-256.")
-          }
           let ciphertext = encryptedPage.dropLast(16)
           let tag = encryptedPage.suffix(16)
           let sealedBox = try AES.GCM.SealedBox(
@@ -135,10 +133,14 @@ private final class OfflineSecurityPlugin: NSObject, FlutterPlugin {
           )
           let plaintext = try AES.GCM.open(
             sealedBox,
-            using: SymmetricKey(data: contentKey),
+            using: contentKey,
             authenticating: aad
           )
           value = FlutterStandardTypedData(bytes: plaintext)
+
+        case "clearTransientKeys":
+          self.clearTransientContentKeys()
+          value = nil
 
         case "readClock":
           value = [
@@ -148,24 +150,23 @@ private final class OfflineSecurityPlugin: NSObject, FlutterPlugin {
 
         case "deleteIdentity":
           let scope = try self.requiredText(call, key: "accountScope")
+          self.clearTransientContentKeys()
           try self.deletePrivateKey(accountScope: scope)
           value = nil
 
         default:
-          DispatchQueue.main.async { result(FlutterMethodNotImplemented) }
+          result(FlutterMethodNotImplemented)
           return
         }
-        DispatchQueue.main.async { result(value) }
+        result(value)
       } catch {
-        DispatchQueue.main.async {
-          result(
-            FlutterError(
-              code: "offline_security_error",
-              message: error.localizedDescription,
-              details: nil
-            )
+        result(
+          FlutterError(
+            code: "offline_security_error",
+            message: error.localizedDescription,
+            details: nil
           )
-        }
+        )
       }
     }
   }
@@ -280,6 +281,42 @@ private final class OfflineSecurityPlugin: NSObject, FlutterPlugin {
       )
     }
     return try decodeOaepSha256Mgf1Sha1(encodedMessage)
+  }
+
+  private func cachedContentKey(
+    accountScope: String,
+    _ wrappedContentKey: String
+  ) throws -> SymmetricKey {
+    let cacheKey = sha256Hex(Data(accountScope.utf8)) + ":"
+      + sha256Hex(try decodeBase64Url(wrappedContentKey))
+    transientKeyLock.lock()
+    if let cached = transientContentKeys[cacheKey] {
+      transientKeyLock.unlock()
+      return cached
+    }
+    transientKeyLock.unlock()
+
+    let privateKey = try getOrCreatePrivateKey(accountScope: accountScope)
+    var rawKey = try unwrapContentKey(wrappedContentKey, privateKey: privateKey)
+    defer { rawKey.resetBytes(in: 0..<rawKey.count) }
+    guard rawKey.count == 32 else {
+      throw OfflineSecurityError("The content key is not AES-256.")
+    }
+    let candidate = SymmetricKey(data: rawKey)
+
+    transientKeyLock.lock()
+    defer { transientKeyLock.unlock() }
+    if let cached = transientContentKeys[cacheKey] {
+      return cached
+    }
+    transientContentKeys[cacheKey] = candidate
+    return candidate
+  }
+
+  private func clearTransientContentKeys() {
+    transientKeyLock.lock()
+    transientContentKeys.removeAll(keepingCapacity: false)
+    transientKeyLock.unlock()
   }
 
   private func decodeOaepSha256Mgf1Sha1(_ encodedMessage: Data) throws -> Data {

@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:comiverse_mobile/src/models/offline_download.dart';
@@ -13,6 +13,55 @@ import 'package:comiverse_mobile/src/services/offline_platform_security.dart';
 import 'package:comiverse_mobile/src/services/session_storage.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('native offline byte ownership', () {
+    const channel = MethodChannel('comiverse/offline_security_test');
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    test('copies immutable Android decryption results before wiping', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            expect(call.method, 'decryptPage');
+            return Uint8List.fromList([1, 2, 3]).asUnmodifiableView();
+          });
+      const security = NativeOfflinePlatformSecurity(channel: channel);
+
+      final bytes = await security.decryptPage(
+        accountScope: 'user-1',
+        wrappedContentKey: 'wrapped-key',
+        keyAlgorithm: 'RSA-OAEP-SHA256-MGF1SHA1',
+        nonce: Uint8List(12),
+        encryptedPage: Uint8List.fromList([4, 5, 6]),
+        aad: Uint8List.fromList([7, 8]),
+      );
+
+      expect(() => bytes.fillRange(0, bytes.length, 0), returnsNormally);
+      expect(bytes, everyElement(0));
+    });
+
+    test('copies immutable Android enrollment signatures', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            expect(call.method, 'signEnrollmentChallenge');
+            return Uint8List.fromList([9, 8, 7]).asUnmodifiableView();
+          });
+      const security = NativeOfflinePlatformSecurity(channel: channel);
+
+      final signature = await security.signEnrollmentChallenge(
+        accountScope: 'user-1',
+        challenge: Uint8List.fromList([1]),
+      );
+
+      expect(() => signature[0] = 0, returnsNormally);
+      expect(signature.first, 0);
+    });
+  });
+
   group('offline license signature', () {
     test('accepts standard Ed25519 X.509 SPKI and rejects tampering', () async {
       final algorithm = Ed25519();
@@ -395,6 +444,9 @@ class _FakePlatformSecurity implements OfflinePlatformSecurity {
 
   @override
   Future<void> deleteIdentity(String accountScope) async {}
+
+  @override
+  Future<void> clearTransientKeys() async {}
 
   @override
   Future<Uint8List> decryptPage({

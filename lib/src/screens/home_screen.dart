@@ -17,12 +17,14 @@ class HomeScreen extends StatefulWidget {
     required this.onOpenExplore,
     required this.onOpenNotifications,
     required this.unreadCount,
+    this.onOpenChat,
     this.offlineDownloads,
   });
 
   final ApiClient apiClient;
   final VoidCallback onOpenExplore;
   final VoidCallback onOpenNotifications;
+  final VoidCallback? onOpenChat;
   final int unreadCount;
   final OfflineDownloadService? offlineDownloads;
 
@@ -121,6 +123,13 @@ class _HomeScreenState extends State<HomeScreen>
             onPressed: widget.onOpenExplore,
             icon: const Icon(Icons.search_rounded),
           ),
+          if (widget.onOpenChat != null)
+            IconButton(
+              key: const Key('home-global-chat'),
+              tooltip: context.tr('Global Chat'),
+              onPressed: widget.onOpenChat,
+              icon: const Icon(Icons.chat_bubble_outline_rounded),
+            ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: IconButton(

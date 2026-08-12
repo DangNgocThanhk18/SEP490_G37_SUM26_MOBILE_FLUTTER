@@ -13,6 +13,7 @@ import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.StandardMethodCodec
 import java.nio.charset.StandardCharsets
 import java.security.KeyPairGenerator
 import java.security.KeyStore
@@ -20,7 +21,7 @@ import java.security.MessageDigest
 import java.security.Signature
 import java.security.spec.MGF1ParameterSpec
 import java.security.spec.PSSParameterSpec
-import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.OAEPParameterSpec
@@ -33,7 +34,7 @@ class MainActivity : FlutterActivity() {
         private const val OFFLINE_SECURITY_CHANNEL = "comiverse/offline_security"
         private const val NOTIFICATION_CHANNEL = "comiverse_activity"
         private const val OFFLINE_KEY_PREFIX = "comiverse_offline_rsa_v1_"
-        private val offlineCryptoExecutor = Executors.newFixedThreadPool(2)
+        private val transientContentKeys = ConcurrentHashMap<String, ByteArray>()
     }
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
@@ -74,16 +75,19 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        val messenger = flutterEngine.dartExecutor.binaryMessenger
+        val offlineTaskQueue = messenger.makeBackgroundTaskQueue()
         MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
+            messenger,
             OFFLINE_SECURITY_CHANNEL,
+            StandardMethodCodec.INSTANCE,
+            offlineTaskQueue,
         ).setMethodCallHandler { call, result ->
             if (call.method == "isSupported") {
                 result.success(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
                 return@setMethodCallHandler
             }
-            offlineCryptoExecutor.execute {
-              try {
+            try {
                 when (call.method) {
                     "getOrCreateIdentity" -> {
                         val scope = requiredText(call.argument<String>("accountScope"), "accountScope")
@@ -97,7 +101,7 @@ class MainActivity : FlutterActivity() {
                                 .joinToString(" ")
                                 .ifBlank { "Android device" },
                         )
-                        runOnUiThread { result.success(response) }
+                        result.success(response)
                     }
                     "signEnrollmentChallenge" -> {
                         val scope = requiredText(call.argument<String>("accountScope"), "accountScope")
@@ -120,7 +124,7 @@ class MainActivity : FlutterActivity() {
                         signature.initSign(privateKey)
                         signature.update(challenge)
                         val bytes = signature.sign()
-                        runOnUiThread { result.success(bytes) }
+                        result.success(bytes)
                     }
                     "decryptPage" -> {
                         val scope = requiredText(call.argument<String>("accountScope"), "accountScope")
@@ -145,30 +149,28 @@ class MainActivity : FlutterActivity() {
                         require(encryptedPage.size > 16 && encryptedPage.size <= 12 * 1024 * 1024 + 16) {
                             "Encrypted page has an invalid size"
                         }
-                        val privateKey = getOrCreateOfflineKeyPair(scope).private
-                        val unwrapCipher = Cipher.getInstance("RSA/ECB/OAEPPadding")
-                        val oaep = OAEPParameterSpec(
-                            "SHA-256",
-                            "MGF1",
-                            MGF1ParameterSpec.SHA1,
-                            PSource.PSpecified.DEFAULT,
-                        )
-                        unwrapCipher.init(Cipher.DECRYPT_MODE, privateKey, oaep)
-                        val contentKey = unwrapCipher.doFinal(decodeBase64Url(wrappedContentKey))
-                        val decryptedPage = try {
-                            require(contentKey.size == 32) { "Content key must be AES-256" }
-                            val pageCipher = Cipher.getInstance("AES/GCM/NoPadding")
-                            pageCipher.init(
-                                Cipher.DECRYPT_MODE,
-                                SecretKeySpec(contentKey, "AES"),
-                                GCMParameterSpec(128, nonce),
-                            )
-                            pageCipher.updateAAD(aad)
-                            pageCipher.doFinal(encryptedPage)
-                        } finally {
-                            contentKey.fill(0)
+                        val wrappedKeyBytes = decodeBase64Url(wrappedContentKey)
+                        val cacheKey = transientKeyCacheKey(scope, wrappedKeyBytes)
+                        val contentKey = transientContentKeys[cacheKey] ?: synchronized(transientContentKeys) {
+                            transientContentKeys[cacheKey] ?: unwrapContentKey(
+                                scope,
+                                wrappedKeyBytes,
+                            ).also { transientContentKeys[cacheKey] = it }
                         }
-                        runOnUiThread { result.success(decryptedPage) }
+                        require(contentKey.size == 32) { "Content key must be AES-256" }
+                        val pageCipher = Cipher.getInstance("AES/GCM/NoPadding")
+                        pageCipher.init(
+                            Cipher.DECRYPT_MODE,
+                            SecretKeySpec(contentKey, "AES"),
+                            GCMParameterSpec(128, nonce),
+                        )
+                        pageCipher.updateAAD(aad)
+                        val decryptedPage = pageCipher.doFinal(encryptedPage)
+                        result.success(decryptedPage)
+                    }
+                    "clearTransientKeys" -> {
+                        clearTransientContentKeys()
+                        result.success(null)
                     }
                     "readClock" -> {
                         val clockData = mapOf(
@@ -179,26 +181,24 @@ class MainActivity : FlutterActivity() {
                                 -1,
                             ),
                         )
-                        runOnUiThread { result.success(clockData) }
+                        result.success(clockData)
                     }
                     "deleteIdentity" -> {
                         val scope = requiredText(call.argument<String>("accountScope"), "accountScope")
+                        clearTransientContentKeys()
                         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
                         val alias = offlineKeyAlias(scope)
                         if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias)
-                        runOnUiThread { result.success(null) }
+                        result.success(null)
                     }
-                    else -> runOnUiThread { result.notImplemented() }
+                    else -> result.notImplemented()
                 }
-              } catch (error: Throwable) {
-                runOnUiThread {
-                    result.error(
-                        "offline_security_error",
-                        error.message ?: "Offline security operation failed",
-                        null,
-                    )
-                }
-              }
+            } catch (error: Throwable) {
+                result.error(
+                    "offline_security_error",
+                    error.message ?: "Offline security operation failed",
+                    null,
+                )
             }
         }
     }
@@ -231,6 +231,27 @@ class MainActivity : FlutterActivity() {
             .build()
         generator.initialize(specification)
         return generator.generateKeyPair()
+    }
+
+    private fun unwrapContentKey(accountScope: String, wrappedKey: ByteArray): ByteArray {
+        val privateKey = getOrCreateOfflineKeyPair(accountScope).private
+        val unwrapCipher = Cipher.getInstance("RSA/ECB/OAEPPadding")
+        val oaep = OAEPParameterSpec(
+            "SHA-256",
+            "MGF1",
+            MGF1ParameterSpec.SHA1,
+            PSource.PSpecified.DEFAULT,
+        )
+        unwrapCipher.init(Cipher.DECRYPT_MODE, privateKey, oaep)
+        return unwrapCipher.doFinal(wrappedKey)
+    }
+
+    private fun transientKeyCacheKey(accountScope: String, wrappedKey: ByteArray): String =
+        sha256Hex(accountScope.toByteArray(StandardCharsets.UTF_8)) + ":" + sha256Hex(wrappedKey)
+
+    private fun clearTransientContentKeys() {
+        transientContentKeys.values.forEach { it.fill(0) }
+        transientContentKeys.clear()
     }
 
     private fun offlineKeyAlias(accountScope: String): String {

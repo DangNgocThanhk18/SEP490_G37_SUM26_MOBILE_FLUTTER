@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
 import '../models/chapter.dart';
+import '../models/chat_message.dart';
 import '../models/comic.dart';
 import '../models/content_comment.dart';
 import '../models/app_notification.dart';
@@ -103,8 +104,19 @@ class ApiClient {
   int _readCacheEpoch = 0;
 
   bool get hasToken => _token != null && _token!.isNotEmpty;
+  String? get accessToken => _token;
   String? get refreshToken => _refreshToken;
   UserProfile? get currentUser => _currentUser;
+
+  String get webSocketUrl {
+    final httpUri = Uri.parse(baseUrl);
+    return httpUri
+        .replace(
+          scheme: httpUri.scheme == 'https' ? 'wss' : 'ws',
+          path: '${httpUri.path}/ws',
+        )
+        .toString();
+  }
 
   void setLanguage(String languageCode) {
     if (languageCode == 'en' || languageCode == 'vi') {
@@ -705,6 +717,54 @@ class ApiClient {
     final value = _unwrapData(json);
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  Future<ChatMessagePage> getGlobalChatMessages({
+    int page = 1,
+    int limit = 30,
+  }) async {
+    final safePage = page < 1 ? 1 : page;
+    final safeLimit = limit.clamp(1, 100);
+    final json = await _request(
+      'GET',
+      '/chat/messages?chat_type=GLOBAL&page=$safePage&limit=$safeLimit',
+    );
+    final data = _unwrapData(json);
+    final messages = data is List
+        ? data
+              .whereType<Map<String, dynamic>>()
+              .map(ChatMessage.fromJson)
+              .where(
+                (message) =>
+                    message.id.isNotEmpty && message.content.trim().isNotEmpty,
+              )
+              .toList()
+        : <ChatMessage>[];
+    final metadata = json['metadata'];
+    final totalPages = metadata is Map<String, dynamic>
+        ? _asInt(metadata['totalPages'], fallback: safePage)
+        : safePage;
+    return ChatMessagePage(
+      messages: messages,
+      hasMore: safePage < totalPages || messages.length >= safeLimit,
+    );
+  }
+
+  Future<ChatMessage> sendGlobalChatMessage(String content) async {
+    final json = await _request(
+      'POST',
+      '/chat/messages',
+      body: {'chatType': 'GLOBAL', 'content': content.trim()},
+    );
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read the sent chat message.');
+    }
+    return ChatMessage.fromJson(data);
+  }
+
+  Future<void> deleteChatMessage(String messageId) async {
+    await _request('DELETE', '/chat/messages/$messageId');
   }
 
   Future<void> registerPushDevice({

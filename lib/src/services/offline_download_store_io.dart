@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -139,15 +140,7 @@ class PrivateOfflineDownloadStore implements OfflineDownloadStore {
   }) async {
     final directory = await _accountDirectory(accountScope);
     final file = File(_packagePath(directory, chapterId));
-    final sink = _DigestSink();
-    final input = sha256.startChunkedConversion(sink);
-    await for (final chunk in file.openRead()) {
-      input.add(chunk);
-    }
-    input.close();
-    final value = sink.value;
-    if (value == null) throw const FileSystemException('Cannot hash package.');
-    return value.toString();
+    return Isolate.run(() => _sha256File(file.path));
   }
 
   @override
@@ -196,6 +189,18 @@ class PrivateOfflineDownloadStore implements OfflineDownloadStore {
 
   String _stagedPath(Directory directory, String chapterId) =>
       '${_packagePath(directory, chapterId)}.part';
+}
+
+Future<String> _sha256File(String path) async {
+  final sink = _DigestSink();
+  final input = sha256.startChunkedConversion(sink);
+  await for (final chunk in File(path).openRead()) {
+    input.add(chunk);
+  }
+  input.close();
+  final value = sink.value;
+  if (value == null) throw const FileSystemException('Cannot hash package.');
+  return value.toString();
 }
 
 class _DigestSink implements Sink<Digest> {

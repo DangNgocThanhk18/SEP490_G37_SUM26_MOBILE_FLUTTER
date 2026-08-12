@@ -62,7 +62,7 @@ class UserProfile {
     }
 
     return UserProfile(
-      userId: json['userId']?.toString(),
+      userId: (json['userId'] ?? json['id'])?.toString(),
       username: (json['username'] ?? 'reader').toString(),
       email: (json['email'] ?? '').toString(),
       fullName: json['fullName']?.toString(),
@@ -96,4 +96,3 @@ class UserProfile {
     };
   }
 }
-

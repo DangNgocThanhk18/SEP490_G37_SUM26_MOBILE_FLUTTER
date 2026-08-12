@@ -19,6 +19,7 @@ import 'comic_detail_screen.dart';
 import 'explore_screen.dart';
 import 'forum_screen.dart';
 import 'forum_thread_screen.dart';
+import 'global_chat_screen.dart';
 import 'home_screen.dart';
 import 'library_screen.dart';
 import 'notifications_screen.dart';
@@ -388,6 +389,13 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         apiClient: widget.apiClient,
         offlineDownloads: widget.offlineDownloads,
         onOpenExplore: () => _goTo(_ShellSection.explore),
+        onOpenChat: () => _push(
+          GlobalChatScreen(
+            apiClient: widget.apiClient,
+            user: widget.user,
+            onSignIn: widget.onSignOut,
+          ),
+        ),
         onOpenNotifications: () => _goTo(_ShellSection.notifications),
         unreadCount: _unreadCount,
       ),

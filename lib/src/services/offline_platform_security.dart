@@ -43,6 +43,8 @@ abstract interface class OfflinePlatformSecurity {
 
   Future<OfflinePlatformClock> readClock();
 
+  Future<void> clearTransientKeys();
+
   Future<void> deleteIdentity(String accountScope);
 }
 
@@ -95,7 +97,7 @@ class NativeOfflinePlatformSecurity implements OfflinePlatformSecurity {
         message: 'The device security provider did not sign the challenge.',
       );
     }
-    return result;
+    return Uint8List.fromList(result);
   }
 
   @override
@@ -121,7 +123,10 @@ class NativeOfflinePlatformSecurity implements OfflinePlatformSecurity {
         message: 'The offline page could not be decrypted.',
       );
     }
-    return result;
+    // Platform messages expose typed-data views backed by an immutable engine
+    // buffer. Offline preparation wipes plaintext after caching, so keep an
+    // owned mutable copy instead of leaking the codec's view downstream.
+    return Uint8List.fromList(result);
   }
 
   @override
@@ -140,6 +145,10 @@ class NativeOfflinePlatformSecurity implements OfflinePlatformSecurity {
       bootCount: bootCount.toInt(),
     );
   }
+
+  @override
+  Future<void> clearTransientKeys() =>
+      _channel.invokeMethod('clearTransientKeys');
 
   @override
   Future<void> deleteIdentity(String accountScope) =>

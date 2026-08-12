@@ -19,6 +19,17 @@ import 'session_storage.dart';
 
 String _computeSha256(Uint8List bytes) => sha256.convert(bytes).toString();
 
+void _clearBytes(Uint8List bytes) {
+  if (bytes.isEmpty) return;
+  try {
+    bytes.fillRange(0, bytes.length, 0);
+  } on UnsupportedError {
+    // Some platform/cache implementations can return immutable typed views.
+    // Failing to wipe such a view must not make an otherwise valid download
+    // unreadable; native results are copied into owned mutable buffers.
+  }
+}
+
 abstract interface class OfflineLicenseVerifier {
   Future<OfflineLicenseClaims> verify(String compactJws);
 }
@@ -170,6 +181,9 @@ class OfflineDownloadService extends ChangeNotifier {
 
   String? _accountScope;
   final Set<String> _verifiedPackageHashes = {};
+  final Set<String> _invalidPackageHashes = {};
+  final Set<String> _verifiedPreparedPages = {};
+  final Map<String, Future<void>> _activePackageVerifications = {};
   final Map<String, Future<OfflineDownloadEntry>> _activeDownloads = {};
   final Map<String, Future<OfflineDownloadEntry>> _activeRenewals = {};
   final Map<String, _OpenOfflineSession> _openSessions = {};
@@ -179,8 +193,9 @@ class OfflineDownloadService extends ChangeNotifier {
 
   final Map<String, Uint8List> _pageBytesCache = {};
   final Map<String, Future<Uint8List>> _activePageReads = {};
+  final Map<Uint8List, int> _pageByteLeases = Map.identity();
+  final Set<Uint8List> _evictedPageBytes = Set.identity();
   static const int _maxCachedPagesInMemory = 6;
-  static const int _decryptionWorkers = 2;
 
   String? get accountScope => _accountScope;
   int get decryptionEpoch => _decryptionEpoch;
@@ -188,7 +203,11 @@ class OfflineDownloadService extends ChangeNotifier {
 
   Uint8List? getCachedPage(String offlineUri) {
     if (!_isForeground) return null;
-    return _pageBytesCache[offlineUri];
+    final bytes = _pageBytesCache.remove(offlineUri);
+    if (bytes == null) return null;
+    _pageBytesCache[offlineUri] = bytes;
+    _retainPageBytes(bytes);
+    return bytes;
   }
 
   bool get isConfigured =>
@@ -205,14 +224,22 @@ class OfflineDownloadService extends ChangeNotifier {
     if (next == _accountScope) return;
     _accountScope = next == null || next.isEmpty ? null : next;
     clearDecryptedMemory();
-    await decryptedPageCache.clearAll();
+    await Future.wait([
+      decryptedPageCache.clearAll(),
+      platformSecurity.clearTransientKeys(),
+    ]);
     notifyListeners();
   }
 
-  void clearDecryptedMemory() {
-    _verifiedPackageHashes.clear();
+  void clearDecryptedMemory({bool clearPackageVerification = true}) {
+    if (clearPackageVerification) _verifiedPackageHashes.clear();
+    if (clearPackageVerification) _invalidPackageHashes.clear();
+    _verifiedPreparedPages.clear();
     _openSessions.clear();
     _trustedAnchors.clear();
+    for (final bytes in _pageBytesCache.values) {
+      _evictPageBytes(bytes);
+    }
     _pageBytesCache.clear();
     _activePageReads.clear();
     _decryptionEpoch++;
@@ -491,18 +518,19 @@ class OfflineDownloadService extends ChangeNotifier {
       unawaited(renewChapter(chapterId).catchError((_) => entry));
     }
     final claims = await licenseVerifier.verify(entry.licenseToken);
-    final session = _OpenOfflineSession(entry, claims);
+    final session = _OpenOfflineSession(entry, claims)..markValidated();
     _openSessions[chapterId] = session;
-    await _prepareChapter(session);
+    final imageUris = [
+      for (final page in entry.manifest.pages)
+        'comiverse-offline://${entry.chapterId}/${page.pageNumber}',
+    ];
+    unawaited(_warmInitialPages(imageUris.take(2)));
     return ChapterDetail(
       id: entry.chapterId,
       title: entry.chapterTitle,
       chapterNumber: entry.chapterNumber,
       comicId: entry.comicId,
-      images: [
-        for (final page in entry.manifest.pages)
-          'comiverse-offline://${entry.chapterId}/${page.pageNumber}',
-      ],
+      images: imageUris,
     );
   }
 
@@ -513,15 +541,21 @@ class OfflineDownloadService extends ChangeNotifier {
         'Offline pages are locked while the app is in the background.',
       );
     }
-    final cached = _pageBytesCache[offlineUri];
+    final cached = getCachedPage(offlineUri);
     if (cached != null) return cached;
     final active = _activePageReads[offlineUri];
-    if (active != null) return active;
+    if (active != null) {
+      final bytes = await active;
+      _retainPageBytes(bytes);
+      return bytes;
+    }
 
     final operation = _readPage(offlineUri);
     _activePageReads[offlineUri] = operation;
     try {
-      return await operation;
+      final bytes = await operation;
+      _retainPageBytes(bytes);
+      return bytes;
     } finally {
       _activePageReads.remove(offlineUri);
     }
@@ -550,12 +584,19 @@ class OfflineDownloadService extends ChangeNotifier {
       final entry = await _validatedEntry(chapterId);
       final claims = await licenseVerifier.verify(entry.licenseToken);
       await _validateTrustedTime(entry);
-      session = _OpenOfflineSession(entry, claims);
+      session = _OpenOfflineSession(entry, claims)..markValidated();
       _openSessions[chapterId] = session;
-    } else {
+    } else if (session.validationExpired) {
       await _validateTrustedTime(session.entry);
+      session.markValidated();
     }
     final entry = session.entry;
+    if (_invalidPackageHashes.contains(_verifiedKey(entry))) {
+      throw const OfflineDownloadException(
+        'corrupted_package',
+        'The downloaded chapter failed its integrity check.',
+      );
+    }
     final page = entry.manifest.page(pageNumber);
     final prepared = await decryptedPageCache.read(
       accountScope: _requireAccount(),
@@ -564,13 +605,18 @@ class OfflineDownloadService extends ChangeNotifier {
       pageNumber: pageNumber,
     );
     if (prepared != null) {
-      final preparedHash = await compute(_computeSha256, prepared);
-      if (prepared.length == page.plaintextLength &&
-          preparedHash == page.pageSha256) {
+      final preparedKey = _preparedPageKey(entry, pageNumber);
+      final validLength = prepared.length == page.plaintextLength;
+      final valid =
+          validLength &&
+          (_verifiedPreparedPages.contains(preparedKey) ||
+              await compute(_computeSha256, prepared) == page.pageSha256);
+      if (valid) {
+        _verifiedPreparedPages.add(preparedKey);
         _rememberPage(offlineUri, prepared);
         return prepared;
       }
-      prepared.fillRange(0, prepared.length, 0);
+      _clearBytes(prepared);
     }
     return _decryptPage(
       session: session,
@@ -580,46 +626,15 @@ class OfflineDownloadService extends ChangeNotifier {
     );
   }
 
-  Future<void> _prepareChapter(_OpenOfflineSession session) async {
-    final pages = session.entry.manifest.pages;
-    var nextIndex = 0;
-
-    Future<void> worker() async {
-      while (_isForeground) {
-        final index = nextIndex++;
-        if (index >= pages.length) return;
-        final page = pages[index];
-        final existing = await decryptedPageCache.read(
-          accountScope: _requireAccount(),
-          chapterId: session.entry.chapterId,
-          packageSha256: session.entry.packageSha256,
-          pageNumber: page.pageNumber,
-        );
-        if (existing != null) {
-          final valid =
-              existing.length == page.plaintextLength &&
-              await compute(_computeSha256, existing) == page.pageSha256;
-          existing.fillRange(0, existing.length, 0);
-          if (valid) continue;
-        }
-        final uri =
-            'comiverse-offline://${session.entry.chapterId}/${page.pageNumber}';
-        final bytes = await _decryptPage(
-          session: session,
-          pageNumber: page.pageNumber,
-          offlineUri: uri,
-          keepInMemory: false,
-        );
-        bytes.fillRange(0, bytes.length, 0);
+  Future<void> _warmInitialPages(Iterable<String> offlineUris) async {
+    for (final offlineUri in offlineUris) {
+      if (!_isForeground) return;
+      try {
+        final bytes = await readPage(offlineUri);
+        releasePageBytes(bytes);
+      } catch (_) {
+        return;
       }
-    }
-
-    await Future.wait([for (var i = 0; i < _decryptionWorkers; i++) worker()]);
-    if (!_isForeground) {
-      throw const OfflineDownloadException(
-        'app_backgrounded',
-        'Offline pages are locked while the app is in the background.',
-      );
     }
   }
 
@@ -659,7 +674,7 @@ class OfflineDownloadService extends ChangeNotifier {
       final plaintextHash = await compute(_computeSha256, plaintext);
       if (plaintext.length != page.plaintextLength ||
           plaintextHash != page.pageSha256) {
-        plaintext.fillRange(0, plaintext.length, 0);
+        _clearBytes(plaintext);
         throw const OfflineDownloadException(
           'corrupted_package',
           'The decrypted page failed its integrity check.',
@@ -672,6 +687,7 @@ class OfflineDownloadService extends ChangeNotifier {
         pageNumber: pageNumber,
         bytes: plaintext,
       );
+      _verifiedPreparedPages.add(_preparedPageKey(entry, pageNumber));
       if (keepInMemory) {
         _rememberPage(offlineUri, plaintext);
       }
@@ -684,21 +700,43 @@ class OfflineDownloadService extends ChangeNotifier {
         'This download cannot be opened on this device. Download it again.',
       );
     } finally {
-      encrypted.fillRange(0, encrypted.length, 0);
+      _clearBytes(encrypted);
     }
   }
 
   void _rememberPage(String offlineUri, Uint8List bytes) {
+    final previous = _pageBytesCache.remove(offlineUri);
+    if (previous != null && !identical(previous, bytes)) {
+      _evictPageBytes(previous);
+    }
     while (_pageBytesCache.length >= _maxCachedPagesInMemory) {
       final removed = _pageBytesCache.remove(_pageBytesCache.keys.first);
-      if (removed != null) removed.fillRange(0, removed.length, 0);
+      if (removed != null) _evictPageBytes(removed);
     }
     _pageBytesCache[offlineUri] = bytes;
   }
 
   void releasePageBytes(Uint8List bytes) {
-    if (!_pageBytesCache.containsValue(bytes)) {
-      bytes.fillRange(0, bytes.length, 0);
+    final leases = _pageByteLeases[bytes] ?? 0;
+    if (leases <= 1) {
+      _pageByteLeases.remove(bytes);
+    } else {
+      _pageByteLeases[bytes] = leases - 1;
+    }
+    if ((_pageByteLeases[bytes] ?? 0) == 0 && _evictedPageBytes.remove(bytes)) {
+      _clearBytes(bytes);
+    }
+  }
+
+  void _retainPageBytes(Uint8List bytes) {
+    _pageByteLeases[bytes] = (_pageByteLeases[bytes] ?? 0) + 1;
+  }
+
+  void _evictPageBytes(Uint8List bytes) {
+    if ((_pageByteLeases[bytes] ?? 0) > 0) {
+      _evictedPageBytes.add(bytes);
+    } else {
+      _clearBytes(bytes);
     }
   }
 
@@ -714,7 +752,10 @@ class OfflineDownloadService extends ChangeNotifier {
       ..remove(chapterId);
     await _writeIndex(account, ids);
     _verifiedPackageHashes.removeWhere((key) => key.startsWith('$chapterId:'));
+    _invalidPackageHashes.removeWhere((key) => key.startsWith('$chapterId:'));
+    _verifiedPreparedPages.removeWhere((key) => key.startsWith('$chapterId:'));
     _openSessions.remove(chapterId);
+    await platformSecurity.clearTransientKeys();
     notifyListeners();
   }
 
@@ -722,8 +763,9 @@ class OfflineDownloadService extends ChangeNotifier {
     final account = _requireAccount();
     final ids = await _readIndex(account);
     await store.deleteAccountPackages(account);
-    await decryptedPageCache.clearAll();
     await Future.wait([
+      decryptedPageCache.clearAll(),
+      platformSecurity.clearTransientKeys(),
       for (final id in ids) secureStorage.delete(_entryKey(account, id)),
       secureStorage.delete(_indexKey(account)),
       secureStorage.delete(_clockKey(account)),
@@ -734,8 +776,11 @@ class OfflineDownloadService extends ChangeNotifier {
 
   Future<void> onAppBackgrounded() async {
     _isForeground = false;
-    clearDecryptedMemory();
-    await decryptedPageCache.clearAll();
+    clearDecryptedMemory(clearPackageVerification: false);
+    await Future.wait([
+      decryptedPageCache.clearAll(),
+      platformSecurity.clearTransientKeys(),
+    ]);
   }
 
   void onAppResumed() {
@@ -1032,18 +1077,14 @@ class OfflineDownloadService extends ChangeNotifier {
       ),
     );
     final verifiedKey = _verifiedKey(entry);
-    if (!_verifiedPackageHashes.contains(verifiedKey)) {
-      final actualHash = await store.packageSha256(
-        accountScope: account,
-        chapterId: chapterId,
+    if (_invalidPackageHashes.contains(verifiedKey)) {
+      throw const OfflineDownloadException(
+        'corrupted_package',
+        'The downloaded chapter failed its integrity check.',
       );
-      if (actualHash.toLowerCase() != claims.packageSha256) {
-        throw const OfflineDownloadException(
-          'corrupted_package',
-          'The downloaded chapter failed its integrity check.',
-        );
-      }
-      _verifiedPackageHashes.add(verifiedKey);
+    }
+    if (!_verifiedPackageHashes.contains(verifiedKey)) {
+      _startPackageVerification(entry, account);
     }
     // Always reparse the small on-disk manifest. Secure-storage metadata is
     // only an index and must never be allowed to choose ciphertext offsets.
@@ -1065,6 +1106,49 @@ class OfflineDownloadService extends ChangeNotifier {
       staged: false,
     );
     return entry.copyWith(manifest: actualManifest, sizeBytes: length);
+  }
+
+  void _startPackageVerification(OfflineDownloadEntry entry, String account) {
+    final key = _verifiedKey(entry);
+    if (_activePackageVerifications.containsKey(key)) return;
+    late final Future<void> operation;
+    operation = () async {
+      try {
+        // Let the first visible pages win the disk/CPU budget on low-end
+        // phones. Every displayed page is still independently authenticated.
+        await Future<void>.delayed(const Duration(seconds: 2));
+        if (_accountScope != account || _invalidPackageHashes.contains(key)) {
+          return;
+        }
+        final actualHash = await store.packageSha256(
+          accountScope: account,
+          chapterId: entry.chapterId,
+        );
+        if (_accountScope != account) return;
+        if (actualHash.toLowerCase() == entry.packageSha256.toLowerCase()) {
+          _verifiedPackageHashes.add(key);
+          return;
+        }
+        _invalidPackageHashes.add(key);
+        _openSessions.remove(entry.chapterId);
+        final prefix = 'comiverse-offline://${entry.chapterId}/';
+        final staleUris = _pageBytesCache.keys
+            .where((uri) => uri.startsWith(prefix))
+            .toList(growable: false);
+        for (final uri in staleUris) {
+          final bytes = _pageBytesCache.remove(uri);
+          if (bytes != null) _evictPageBytes(bytes);
+        }
+        notifyListeners();
+      } catch (_) {
+        // Page-level signed hashes and AES-GCM remain authoritative if a
+        // best-effort whole-package scan is interrupted by the OS.
+      } finally {
+        _activePackageVerifications.remove(key);
+      }
+    }();
+    _activePackageVerifications[key] = operation;
+    unawaited(operation);
   }
 
   Future<void> _anchorTrustedTime(String account, DateTime serverTime) async {
@@ -1251,6 +1335,9 @@ class OfflineDownloadService extends ChangeNotifier {
 
   String _verifiedKey(OfflineDownloadEntry entry) =>
       '${entry.chapterId}:${entry.packageSha256}';
+
+  String _preparedPageKey(OfflineDownloadEntry entry, int pageNumber) =>
+      '${entry.chapterId}:${entry.packageSha256}:$pageNumber';
 }
 
 class _RegisteredDevice {
@@ -1264,10 +1351,21 @@ class _RegisteredDevice {
 }
 
 class _OpenOfflineSession {
-  const _OpenOfflineSession(this.entry, this.claims);
+  _OpenOfflineSession(this.entry, this.claims);
 
   final OfflineDownloadEntry entry;
   final OfflineLicenseClaims claims;
+  final Stopwatch _validationAge = Stopwatch();
+
+  bool get validationExpired =>
+      !_validationAge.isRunning ||
+      _validationAge.elapsed >= const Duration(seconds: 30);
+
+  void markValidated() {
+    _validationAge
+      ..reset()
+      ..start();
+  }
 }
 
 class _TrustedTimeAnchor {
