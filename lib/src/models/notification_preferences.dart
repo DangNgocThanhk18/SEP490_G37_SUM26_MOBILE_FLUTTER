@@ -25,3 +25,22 @@ class NotificationPreferences {
     );
   }
 }
+
+class PushDeviceStatus {
+  const PushDeviceStatus({
+    required this.serverConfigured,
+    required this.registeredDeviceCount,
+  });
+
+  final bool serverConfigured;
+  final int registeredDeviceCount;
+
+  bool get ready => serverConfigured && registeredDeviceCount > 0;
+
+  factory PushDeviceStatus.fromJson(Map<String, dynamic> json) =>
+      PushDeviceStatus(
+        serverConfigured: json['serverConfigured'] == true,
+        registeredDeviceCount:
+            (json['registeredDeviceCount'] as num?)?.toInt() ?? 0,
+      );
+}

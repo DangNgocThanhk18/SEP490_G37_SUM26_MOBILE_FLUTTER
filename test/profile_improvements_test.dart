@@ -95,6 +95,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('System announcements'), findsOneWidget);
+    expect(find.text('Push delivery is ready on 1 device(s).'), findsOneWidget);
     await tester.tap(find.byType(Switch).first);
     await tester.tap(find.text('Save preferences'));
     await tester.pumpAndSettle();
@@ -376,6 +377,10 @@ class _ProfileApiClient extends ApiClient {
       values: {'SYSTEM_BROADCASTS': true, 'FORUM_ACTIVITY': true},
     );
   }
+
+  @override
+  Future<PushDeviceStatus> getPushDeviceStatus() async =>
+      const PushDeviceStatus(serverConfigured: true, registeredDeviceCount: 1);
 
   @override
   Future<NotificationPreferences> updateNotificationPreferences(

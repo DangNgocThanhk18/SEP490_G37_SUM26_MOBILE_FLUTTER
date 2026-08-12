@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -10,6 +11,7 @@ import '../models/comic.dart';
 import '../models/content_comment.dart';
 import '../models/app_notification.dart';
 import '../models/forum.dart';
+import '../models/login_device.dart';
 import '../models/notification_preferences.dart';
 import '../models/offline_download.dart';
 import '../models/premium_plan.dart';
@@ -86,6 +88,7 @@ class ApiClient {
   static const _accessTokenKey = 'comiverse_access_token';
   static const _refreshTokenKey = 'comiverse_refresh_token';
   static const _profileKey = 'comiverse_user_profile';
+  static const _mobileInstallIdKey = 'comiverse_offline_install_id_v1';
 
   final String baseUrl;
   final Duration _timeout;
@@ -182,13 +185,78 @@ class ApiClient {
     required String password,
   }) async {
     _clearReadCache();
+    final device = await _mobileDeviceIdentity();
     final json = await _request(
       'POST',
       '/auth/login',
-      body: {'username': username, 'password': password},
+      body: {
+        'username': username,
+        'password': password,
+        'deviceId': device.id,
+        'deviceName': device.name,
+        'platform': device.platform,
+      },
       authorized: false,
     );
+    return _completeLogin(json);
+  }
 
+  /// Sign in with a Google ID Token obtained from the google_sign_in package.
+  Future<LoginResult> loginWithGoogle(String idToken) async {
+    _clearReadCache();
+    final device = await _mobileDeviceIdentity();
+    final json = await _request(
+      'POST',
+      '/auth/google-login',
+      body: {
+        'idToken': idToken,
+        'deviceId': device.id,
+        'deviceName': device.name,
+        'platform': device.platform,
+      },
+      authorized: false,
+    );
+    return _completeLogin(json);
+  }
+
+  Future<LoginResult> replaceLoginDevice({
+    required String challengeId,
+    required String deviceToRemoveId,
+    required String otp,
+  }) async {
+    _clearReadCache();
+    final json = await _request(
+      'POST',
+      '/auth/devices/replace',
+      body: {
+        'challengeId': challengeId,
+        'deviceToRemoveId': deviceToRemoveId,
+        'otp': otp,
+      },
+      authorized: false,
+    );
+    return _completeLogin(json);
+  }
+
+  Future<LoginResult> _completeLogin(Map<String, dynamic> json) async {
+    if (json['deviceVerificationRequired'] == true) {
+      final devices = json['devices'] is List
+          ? (json['devices'] as List)
+                .whereType<Map<String, dynamic>>()
+                .map(LoginDevice.fromJson)
+                .where((device) => device.id.isNotEmpty)
+                .toList()
+          : const <LoginDevice>[];
+      throw LoginDeviceVerificationRequired(
+        challengeId: (json['deviceChallengeId'] ?? '').toString(),
+        expiresAt:
+            DateTime.tryParse(
+              (json['deviceChallengeExpiresAt'] ?? '').toString(),
+            ) ??
+            DateTime.now().add(const Duration(minutes: 5)),
+        devices: devices,
+      );
+    }
     final token = (json['token'] ?? '').toString();
     final refreshToken = (json['refreshToken'] ?? '').toString();
     if (token.isEmpty) {
@@ -207,32 +275,36 @@ class ApiClient {
     return LoginResult(token: token, refreshToken: refreshToken, user: user);
   }
 
-  /// Sign in with a Google ID Token obtained from the google_sign_in package.
-  Future<LoginResult> loginWithGoogle(String idToken) async {
-    _clearReadCache();
+  Future<List<LoginDevice>> getLoginDevices() async {
+    final json = await _request('GET', '/auth/devices');
+    final data = _unwrapData(json);
+    if (data is! List) return const [];
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(LoginDevice.fromJson)
+        .where((device) => device.id.isNotEmpty)
+        .toList();
+  }
+
+  Future<DeviceOtpChallenge> requestLoginDeviceRevocation(
+    String deviceId,
+  ) async {
     final json = await _request(
       'POST',
-      '/auth/google-login',
-      body: {'idToken': idToken},
-      authorized: false,
+      '/auth/devices/${Uri.encodeComponent(deviceId)}/revoke-otp',
     );
+    return DeviceOtpChallenge.fromJson(json);
+  }
 
-    final token = (json['token'] ?? '').toString();
-    final refreshToken = (json['refreshToken'] ?? '').toString();
-    if (token.isEmpty) {
-      throw const ApiException('Google sign-in did not return an access token.');
-    }
-
-    _token = token;
-    _refreshToken = refreshToken;
-    final user = await getMe();
-    _currentUser = user;
-    await Future.wait([
-      _sessionStorage.write(_accessTokenKey, token),
-      _sessionStorage.write(_refreshTokenKey, refreshToken),
-      _sessionStorage.write(_profileKey, jsonEncode(user.toJson())),
-    ]);
-    return LoginResult(token: token, refreshToken: refreshToken, user: user);
+  Future<void> confirmLoginDeviceRevocation({
+    required String challengeId,
+    required String otp,
+  }) async {
+    await _request(
+      'POST',
+      '/auth/devices/revoke',
+      body: {'challengeId': challengeId, 'otp': otp},
+    );
   }
 
   /// Register a new account. After success the user must verify their email
@@ -259,10 +331,7 @@ class ApiClient {
   }
 
   /// Verify the OTP code sent to [email] after registration.
-  Future<void> verifyEmail({
-    required String email,
-    required String otp,
-  }) async {
+  Future<void> verifyEmail({required String email, required String otp}) async {
     await _request(
       'POST',
       '/auth/verify-email',
@@ -423,6 +492,47 @@ class ApiClient {
     },
   );
 
+  Future<List<GenreOption>> getGenres() =>
+      _cachedRead('catalog:genres', _catalogCacheDuration, () async {
+        final json = await _request(
+          'GET',
+          '/genres?page=1&size=100',
+          authorized: false,
+        );
+        final data = _unwrapData(json);
+        if (data is! List) return const <GenreOption>[];
+        return data
+            .whereType<Map<String, dynamic>>()
+            .map(GenreOption.fromJson)
+            .where((genre) => genre.id.isNotEmpty && genre.name.isNotEmpty)
+            .toList();
+      });
+
+  Future<ComicCursorPage> exploreComics({
+    String? cursor,
+    String? referenceId,
+    Iterable<String> genreIds = const [],
+    String? publicationStatus,
+    String sortBy = 'Default',
+    int size = 15,
+  }) async {
+    final query = <String, String>{
+      'size': '$size',
+      'sortBy': sortBy,
+      if (genreIds.isNotEmpty) 'genres': genreIds.join(','),
+    };
+    void include(String key, String? value) {
+      if (value != null) query[key] = value;
+    }
+
+    include('cursor', _trimmedOrNull(cursor));
+    include('referenceId', _trimmedOrNull(referenceId));
+    include('publicationStatus', _trimmedOrNull(publicationStatus));
+    final uri = Uri(path: '/comics/explore', queryParameters: query);
+    final json = await _request('GET', uri.toString(), authorized: false);
+    return _parseComicCursorPage(_unwrapData(json));
+  }
+
   Future<List<Comic>> getTopViewed({
     int size = 10,
   }) => _cachedRead('home:top:$size', _homeCacheDuration, () async {
@@ -458,6 +568,23 @@ class ApiClient {
         return _parseComicPayload(_unwrapData(json));
       },
     );
+  }
+
+  Future<ComicCursorPage> getRecommendationPage({
+    int size = 10,
+    String? cursor,
+    String? referenceId,
+  }) async {
+    final query = <String, String>{'size': '$size'};
+    void include(String key, String? value) {
+      if (value != null) query[key] = value;
+    }
+
+    include('cursor', _trimmedOrNull(cursor));
+    include('referenceId', _trimmedOrNull(referenceId));
+    final uri = Uri(path: '/comics/recommendations', queryParameters: query);
+    final json = await _request('GET', uri.toString(), authorized: hasToken);
+    return _parseComicCursorPage(_unwrapData(json));
   }
 
   Future<List<Comic>> getSavedComics() => _cachedRead(
@@ -593,6 +720,15 @@ class ApiClient {
 
   Future<void> unregisterPushDevice(String token) async {
     await _request('DELETE', '/notifications/devices', body: {'token': token});
+  }
+
+  Future<PushDeviceStatus> getPushDeviceStatus() async {
+    final json = await _request('GET', '/notifications/devices/status');
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read push notification status.');
+    }
+    return PushDeviceStatus.fromJson(data);
   }
 
   Future<List<ForumThread>> getForumThreads() => _cachedRead(
@@ -972,7 +1108,9 @@ class ApiClient {
         );
       }
       final contentType = response.headers['content-type'] ?? '';
-      if (!contentType.toLowerCase().startsWith('application/vnd.comiverse.cvpack')) {
+      if (!contentType.toLowerCase().startsWith(
+        'application/vnd.comiverse.cvpack',
+      )) {
         debugPrint(
           'DOWNLOAD_HEADER_ERROR: content-type="$contentType", all headers=${response.headers}',
         );
@@ -983,7 +1121,9 @@ class ApiClient {
       String requiredHeader(String name) {
         final value = response.headers[name.toLowerCase()]?.trim() ?? '';
         if (value.isEmpty) {
-          debugPrint('DOWNLOAD_HEADER_MISSING: missing $name in ${response.headers}');
+          debugPrint(
+            'DOWNLOAD_HEADER_MISSING: missing $name in ${response.headers}',
+          );
           throw ApiException('Backend did not return the $name header.');
         }
         return value;
@@ -1147,6 +1287,21 @@ class ApiClient {
     return const [];
   }
 
+  ComicCursorPage _parseComicCursorPage(Object? data) {
+    if (data is List) {
+      return ComicCursorPage(comics: _parseComicList(data), hasMore: false);
+    }
+    if (data is! Map<String, dynamic>) {
+      return const ComicCursorPage(comics: [], hasMore: false);
+    }
+    return ComicCursorPage(
+      comics: _parseComicList(data['data']),
+      nextCursor: _trimmedOrNull(data['nextCursor']?.toString()),
+      nextReferenceId: _trimmedOrNull(data['nextReferenceId']?.toString()),
+      hasMore: data['hasMore'] == true,
+    );
+  }
+
   String get _viewerCacheKey {
     final token = _token;
     if (token == null || token.isEmpty) return 'guest';
@@ -1229,6 +1384,35 @@ class ApiClient {
     final trimmed = value?.trim();
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
   }
+
+  Future<_MobileDeviceIdentity> _mobileDeviceIdentity() async {
+    var id = await _sessionStorage.read(_mobileInstallIdKey);
+    if (id == null || id.length < 16) {
+      final random = Random.secure();
+      id = List.generate(
+        32,
+        (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+      ).join();
+      await _sessionStorage.write(_mobileInstallIdKey, id);
+    }
+    final platform = defaultTargetPlatform == TargetPlatform.iOS
+        ? 'ios'
+        : 'android';
+    final name = platform == 'ios' ? 'iPhone or iPad' : 'Android device';
+    return _MobileDeviceIdentity(id: id, name: name, platform: platform);
+  }
+}
+
+class _MobileDeviceIdentity {
+  const _MobileDeviceIdentity({
+    required this.id,
+    required this.name,
+    required this.platform,
+  });
+
+  final String id;
+  final String name;
+  final String platform;
 }
 
 class _CachedRead<T extends Object> {

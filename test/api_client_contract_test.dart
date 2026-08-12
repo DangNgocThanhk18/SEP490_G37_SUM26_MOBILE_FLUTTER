@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:comiverse_mobile/src/services/api_client.dart';
 import 'package:comiverse_mobile/src/services/session_storage.dart';
+import 'package:comiverse_mobile/src/models/login_device.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -36,6 +37,106 @@ void main() {
     expect(requests[1].url.queryParameters['sortBy'], 'Recently Updated');
     expect(requests[1].url.queryParameters['size'], '6');
   });
+
+  test(
+    'uses cursor, multi-genre, status, and web sort values for Explore',
+    () async {
+      http.Request? captured;
+      final client = ApiClient(
+        baseUrl: 'http://localhost:8081/api',
+        httpClient: MockClient((request) async {
+          captured = request;
+          return http.Response(
+            jsonEncode({
+              'success': true,
+              'data': {
+                'data': [
+                  {'id': 'comic-1', 'title': 'Comic one'},
+                ],
+                'nextCursor': 'cursor-2',
+                'nextReferenceId': 'comic-1',
+                'hasMore': true,
+              },
+            }),
+            200,
+          );
+        }),
+      );
+
+      final page = await client.exploreComics(
+        cursor: 'cursor-1',
+        referenceId: 'comic-0',
+        genreIds: const ['action-id', 'fantasy-id'],
+        publicationStatus: 'ONGOING',
+        sortBy: 'Most Bookmarked',
+        size: 15,
+      );
+
+      expect(page.comics.single.id, 'comic-1');
+      expect(page.hasMore, isTrue);
+      expect(captured?.url.path, '/api/comics/explore');
+      expect(captured?.url.queryParameters, {
+        'size': '15',
+        'sortBy': 'Most Bookmarked',
+        'cursor': 'cursor-1',
+        'referenceId': 'comic-0',
+        'genres': 'action-id,fantasy-id',
+        'publicationStatus': 'ONGOING',
+      });
+    },
+  );
+
+  test(
+    'fourth mobile login exposes the email OTP replacement challenge',
+    () async {
+      final storage = _MemorySessionStorage();
+      await storage.write(
+        'comiverse_offline_install_id_v1',
+        'stable-installation-id-00000001',
+      );
+      http.Request? captured;
+      final client = ApiClient(
+        baseUrl: 'http://localhost:8081/api',
+        sessionStorage: storage,
+        httpClient: MockClient((request) async {
+          captured = request;
+          return http.Response(
+            jsonEncode({
+              'deviceVerificationRequired': true,
+              'deviceChallengeId': 'challenge-1',
+              'deviceChallengeExpiresAt': '2026-08-12T12:05:00Z',
+              'devices': [
+                {
+                  'id': 'device-1',
+                  'deviceName': 'Old phone',
+                  'platform': 'android',
+                  'current': false,
+                },
+              ],
+            }),
+            202,
+          );
+        }),
+      );
+
+      await expectLater(
+        client.login(username: 'reader', password: 'secret'),
+        throwsA(
+          isA<LoginDeviceVerificationRequired>()
+              .having(
+                (error) => error.challengeId,
+                'challengeId',
+                'challenge-1',
+              )
+              .having((error) => error.devices.length, 'devices', 1),
+        ),
+      );
+      final body = jsonDecode(captured!.body) as Map<String, dynamic>;
+      expect(body['deviceId'], 'stable-installation-id-00000001');
+      expect(body['deviceName'], isNotEmpty);
+      expect(body['platform'], anyOf('android', 'ios'));
+    },
+  );
 
   test(
     'updates the profile and notification preference API contracts',
@@ -218,6 +319,26 @@ void main() {
     });
     expect(requests[1].method, 'DELETE');
     expect(jsonDecode(requests[1].body), {'token': 'fcm-registration-token'});
+  });
+
+  test('reports whether push delivery is configured and registered', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8081/api',
+      httpClient: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'success': true,
+            'data': {'serverConfigured': true, 'registeredDeviceCount': 2},
+          }),
+          200,
+        ),
+      ),
+    );
+
+    final status = await client.getPushDeviceStatus();
+
+    expect(status.ready, isTrue);
+    expect(status.registeredDeviceCount, 2);
   });
 }
 

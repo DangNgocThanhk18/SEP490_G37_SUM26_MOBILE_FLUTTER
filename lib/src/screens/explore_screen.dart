@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../l10n/app_localizations.dart';
@@ -24,11 +26,22 @@ class ExploreScreen extends StatefulWidget {
 
 class _ExploreScreenState extends State<ExploreScreen>
     with AutomaticKeepAliveClientMixin {
-  late Future<List<Comic>> _future;
+  final _scrollController = ScrollController();
+  final _searchController = TextEditingController();
+  final List<Comic> _comics = [];
+  List<GenreOption> _genres = const [];
+  final Set<String> _selectedGenreIds = {};
+  Timer? _searchDebounce;
   String _query = '';
-  String? _genre;
   String? _status;
-  String _sort = 'default';
+  String _sort = 'Default';
+  String? _nextCursor;
+  String? _nextReferenceId;
+  Object? _error;
+  bool _loading = true;
+  bool _loadingMore = false;
+  bool _hasMore = false;
+  int _generation = 0;
 
   @override
   bool get wantKeepAlive => true;
@@ -36,172 +49,247 @@ class _ExploreScreenState extends State<ExploreScreen>
   @override
   void initState() {
     super.initState();
-    _future = widget.apiClient.getComics();
+    _scrollController.addListener(_onScroll);
+    unawaited(_bootstrap());
   }
 
-  void _reload() {
-    widget.apiClient.invalidateCatalogCache();
-    setState(() => _future = widget.apiClient.getComics());
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _scrollController
+      ..removeListener(_onScroll)
+      ..dispose();
+    _searchController.dispose();
+    super.dispose();
   }
 
-  List<Comic> _applyFilters(List<Comic> source) {
-    final query = _query.trim().toLowerCase();
-    final results = source.where((comic) {
-      final matchesQuery =
-          query.isEmpty ||
-          comic.title.toLowerCase().contains(query) ||
-          (comic.authorName?.toLowerCase().contains(query) ?? false) ||
-          comic.genres.any((item) => item.toLowerCase().contains(query));
-      final matchesGenre =
-          _genre == null || comic.genres.any((item) => item == _genre);
-      final matchesStatus = _status == null || comic.status == _status;
-      return matchesQuery && matchesGenre && matchesStatus;
-    }).toList();
-    switch (_sort) {
-      case 'rating':
-        results.sort(
-          (a, b) => (b.ratingAverage ?? 0).compareTo(a.ratingAverage ?? 0),
-        );
-      case 'views':
-        results.sort((a, b) => (b.viewCount ?? 0).compareTo(a.viewCount ?? 0));
-      case 'updated':
-        results.sort(
-          (a, b) => (b.lastChapterUpdatedAt ?? DateTime(1970)).compareTo(
-            a.lastChapterUpdatedAt ?? DateTime(1970),
-          ),
-        );
+  Future<void> _bootstrap() async {
+    try {
+      final genres = await widget.apiClient.getGenres();
+      if (mounted) setState(() => _genres = genres);
+    } catch (_) {
+      // Explore remains usable even if the optional genre list is unavailable.
     }
-    return results;
+    await _reload();
   }
 
-  Future<void> _showFilters(List<Comic> comics) async {
-    final genres = comics.expand((comic) => comic.genres).toSet().toList()
-      ..sort();
-    var genre = _genre;
+  Future<void> _reload() async {
+    final generation = ++_generation;
+    widget.apiClient.invalidateCatalogCache();
+    setState(() {
+      _loading = true;
+      _loadingMore = false;
+      _error = null;
+      _nextCursor = null;
+      _nextReferenceId = null;
+      _hasMore = false;
+    });
+    try {
+      final page = await widget.apiClient.exploreComics(
+        genreIds: _selectedGenreIds,
+        publicationStatus: _status,
+        sortBy: _sort,
+      );
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _comics
+          ..clear()
+          ..addAll(page.comics);
+        _nextCursor = page.nextCursor;
+        _nextReferenceId = page.nextReferenceId;
+        _hasMore = page.hasMore;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _error = error;
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loading || _loadingMore || !_hasMore) return;
+    final generation = _generation;
+    setState(() => _loadingMore = true);
+    try {
+      final page = await widget.apiClient.exploreComics(
+        cursor: _nextCursor,
+        referenceId: _nextReferenceId,
+        genreIds: _selectedGenreIds,
+        publicationStatus: _status,
+        sortBy: _sort,
+      );
+      if (!mounted || generation != _generation) return;
+      final knownIds = _comics.map((comic) => comic.id).toSet();
+      setState(() {
+        _comics.addAll(page.comics.where((comic) => knownIds.add(comic.id)));
+        _nextCursor = page.nextCursor;
+        _nextReferenceId = page.nextReferenceId;
+        _hasMore = page.hasMore;
+        _loadingMore = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _loadingMore = false;
+        _error = _comics.isEmpty ? error : null;
+      });
+    }
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.extentAfter < 600) {
+      unawaited(_loadMore());
+    }
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 180), () {
+      if (mounted) setState(() => _query = value.trim().toLowerCase());
+    });
+  }
+
+  List<Comic> get _visibleComics {
+    if (_query.isEmpty) return _comics;
+    return _comics
+        .where((comic) {
+          return comic.title.toLowerCase().contains(_query) ||
+              (comic.authorName?.toLowerCase().contains(_query) ?? false) ||
+              comic.genres.any((genre) => genre.toLowerCase().contains(_query));
+        })
+        .toList(growable: false);
+  }
+
+  Future<void> _showFilters() async {
+    var selectedGenres = Set<String>.from(_selectedGenreIds);
     var status = _status;
     var sort = _sort;
     final result = await showModalBottomSheet<_ExploreFilters>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  context.tr('Filters'),
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  context.tr('Genre'),
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
-                    Text(
-                      context.tr('Filters'),
-                      style: Theme.of(context).textTheme.headlineSmall,
+                    ChoiceChip(
+                      label: Text(context.tr('All')),
+                      selected: selectedGenres.isEmpty,
+                      onSelected: (_) => setModalState(selectedGenres.clear),
                     ),
-                    const SizedBox(height: 20),
-                    Text(
-                      context.tr('Genre'),
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        ChoiceChip(
-                          label: Text(context.tr('All')),
-                          selected: genre == null,
-                          onSelected: (_) => setModalState(() => genre = null),
-                        ),
-                        for (final item in genres)
-                          ChoiceChip(
-                            label: Text(item),
-                            selected: genre == item,
-                            onSelected: (_) =>
-                                setModalState(() => genre = item),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    Text(
-                      context.tr('Status'),
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        ChoiceChip(
-                          label: Text(context.tr('All')),
-                          selected: status == null,
-                          onSelected: (_) => setModalState(() => status = null),
-                        ),
-                        for (final item in const ['ONGOING', 'COMPLETED'])
-                          ChoiceChip(
-                            label: Text(_statusLabel(context, item)),
-                            selected: status == item,
-                            onSelected: (_) =>
-                                setModalState(() => status = item),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    DropdownButtonFormField<String>(
-                      initialValue: sort,
-                      decoration: InputDecoration(
-                        labelText: context.tr('Sort by'),
+                    for (final genre in _genres)
+                      ChoiceChip(
+                        label: Text(genre.name),
+                        selected: selectedGenres.contains(genre.id),
+                        onSelected: (selected) => setModalState(() {
+                          if (selected) {
+                            selectedGenres.add(genre.id);
+                          } else {
+                            selectedGenres.remove(genre.id);
+                          }
+                        }),
                       ),
-                      items: [
-                        DropdownMenuItem(
-                          value: 'default',
-                          child: Text(context.tr('Default')),
-                        ),
-                        DropdownMenuItem(
-                          value: 'rating',
-                          child: Text(context.tr('Top rated')),
-                        ),
-                        DropdownMenuItem(
-                          value: 'views',
-                          child: Text(context.tr('Most viewed')),
-                        ),
-                        DropdownMenuItem(
-                          value: 'updated',
-                          child: Text(context.tr('Recently updated')),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        if (value != null) setModalState(() => sort = value);
-                      },
-                    ),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: () => Navigator.pop(
-                          context,
-                          _ExploreFilters(
-                            genre: genre,
-                            status: status,
-                            sort: sort,
-                          ),
-                        ),
-                        child: Text(context.tr('Show results')),
-                      ),
-                    ),
                   ],
                 ),
-              ),
-            );
-          },
-        );
-      },
+                const SizedBox(height: 20),
+                Text(
+                  context.tr('Status'),
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: Text(context.tr('All')),
+                      selected: status == null,
+                      onSelected: (_) => setModalState(() => status = null),
+                    ),
+                    for (final item in const ['ONGOING', 'COMPLETED'])
+                      ChoiceChip(
+                        label: Text(_statusLabel(context, item)),
+                        selected: status == item,
+                        onSelected: (_) => setModalState(() => status = item),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                DropdownButtonFormField<String>(
+                  initialValue: sort,
+                  decoration: InputDecoration(labelText: context.tr('Sort by')),
+                  items: [
+                    for (final option in _sortOptions)
+                      DropdownMenuItem(
+                        value: option,
+                        child: Text(_sortLabel(context, option)),
+                      ),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) setModalState(() => sort = value);
+                  },
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () => Navigator.pop(
+                      context,
+                      _ExploreFilters(
+                        genreIds: selectedGenres,
+                        status: status,
+                        sort: sort,
+                      ),
+                    ),
+                    child: Text(context.tr('Show results')),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
-    if (result != null && mounted) {
-      setState(() {
-        _genre = result.genre;
-        _status = result.status;
-        _sort = result.sort;
-      });
-    }
+    if (result == null || !mounted) return;
+    _selectedGenreIds
+      ..clear()
+      ..addAll(result.genreIds);
+    _status = result.status;
+    _sort = result.sort;
+    await _reload();
+  }
+
+  void _toggleQuickGenre(GenreOption genre) {
+    setState(() {
+      if (!_selectedGenreIds.add(genre.id)) _selectedGenreIds.remove(genre.id);
+    });
+    unawaited(_reload());
+  }
+
+  void _clearGenres() {
+    if (_selectedGenreIds.isEmpty) return;
+    _selectedGenreIds.clear();
+    unawaited(_reload());
   }
 
   void _openComic(Comic comic) {
@@ -219,6 +307,7 @@ class _ExploreScreenState extends State<ExploreScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final comics = _visibleComics;
     return Scaffold(
       appBar: AppBar(
         title: Text(context.tr('Explore')),
@@ -237,182 +326,192 @@ class _ExploreScreenState extends State<ExploreScreen>
           ),
         ],
       ),
-      body: FutureBuilder<List<Comic>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return ApiErrorState(error: snapshot.error!, onRetry: _reload);
-          }
-          final source = snapshot.data ?? const [];
-          final comics = _applyFilters(source);
-          final genres = source.expand((comic) => comic.genres).toSet().take(8);
-          return RefreshIndicator(
-            onRefresh: () async => _reload(),
-            child: CustomScrollView(
-              key: const PageStorageKey('explore-scroll'),
-              slivers: [
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-                  sliver: SliverToBoxAdapter(
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            onChanged: (value) =>
-                                setState(() => _query = value),
-                            decoration: InputDecoration(
-                              hintText: context.tr(
-                                'Search comics, authors, genres...',
-                              ),
-                              prefixIcon: const Icon(Icons.search_rounded),
-                            ),
+      body: RefreshIndicator(
+        onRefresh: _reload,
+        child: CustomScrollView(
+          controller: _scrollController,
+          key: const PageStorageKey('explore-scroll'),
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+              sliver: SliverToBoxAdapter(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        onChanged: _onSearchChanged,
+                        decoration: InputDecoration(
+                          hintText: context.tr(
+                            'Search comics, authors, genres...',
                           ),
+                          prefixIcon: const Icon(Icons.search_rounded),
+                          suffixIcon: _query.isEmpty
+                              ? null
+                              : IconButton(
+                                  tooltip: context.tr('Clear'),
+                                  onPressed: () {
+                                    _searchController.clear();
+                                    setState(() => _query = '');
+                                  },
+                                  icon: const Icon(Icons.close_rounded),
+                                ),
                         ),
-                        const SizedBox(width: 8),
-                        IconButton.filledTonal(
-                          tooltip: context.tr('Filters'),
-                          onPressed: () => _showFilters(source),
-                          icon: const Icon(Icons.tune_rounded),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 8),
+                    IconButton.filledTonal(
+                      tooltip: context.tr('Filters'),
+                      onPressed: _showFilters,
+                      icon: Badge(
+                        isLabelVisible:
+                            _selectedGenreIds.isNotEmpty ||
+                            _status != null ||
+                            _sort != 'Default',
+                        child: const Icon(Icons.tune_rounded),
+                      ),
+                    ),
+                  ],
                 ),
-                SliverToBoxAdapter(
-                  child: SizedBox(
-                    height: 48,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      children: [
+              ),
+            ),
+            if (_genres.isNotEmpty)
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 48,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: Text(context.tr('All')),
+                          selected: _selectedGenreIds.isEmpty,
+                          onSelected: (_) => _clearGenres(),
+                        ),
+                      ),
+                      for (final genre in _genres.take(8))
                         Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: ChoiceChip(
-                            label: Text(context.tr('All')),
-                            selected: _genre == null,
-                            onSelected: (_) => setState(() => _genre = null),
+                            label: Text(genre.name),
+                            selected: _selectedGenreIds.contains(genre.id),
+                            onSelected: (_) => _toggleQuickGenre(genre),
                           ),
                         ),
-                        for (final genre in genres)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              label: Text(genre),
-                              selected: _genre == genre,
-                              onSelected: (_) => setState(() => _genre = genre),
-                            ),
-                          ),
-                      ],
-                    ),
+                    ],
                   ),
                 ),
-                if (_genre != null || _status != null || _sort != 'default')
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                    sliver: SliverToBoxAdapter(
-                      child: Wrap(
-                        spacing: 8,
-                        children: [
-                          if (_genre != null)
-                            InputChip(
-                              label: Text(_genre!),
-                              onDeleted: () => setState(() => _genre = null),
-                            ),
-                          if (_status != null)
-                            InputChip(
-                              label: Text(_statusLabel(context, _status!)),
-                              onDeleted: () => setState(() => _status = null),
-                            ),
-                          if (_sort != 'default')
-                            InputChip(
-                              label: Text(_sortLabel(context, _sort)),
-                              onDeleted: () =>
-                                  setState(() => _sort = 'default'),
-                            ),
-                        ],
+              ),
+            if (_loading)
+              const SliverFillRemaining(
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_error != null && _comics.isEmpty)
+              SliverFillRemaining(
+                child: ApiErrorState(error: _error!, onRetry: _reload),
+              )
+            else if (comics.isEmpty)
+              SliverFillRemaining(
+                child: EmptyState(
+                  icon: Icons.search_off_rounded,
+                  message: context.tr('No comics match these filters.'),
+                ),
+              )
+            else ...[
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+                sliver: SliverLayoutBuilder(
+                  builder: (context, constraints) {
+                    final width = constraints.crossAxisExtent;
+                    final columns = width >= 820
+                        ? 5
+                        : width >= 600
+                        ? 4
+                        : width >= 430
+                        ? 3
+                        : 2;
+                    return SliverGrid.builder(
+                      itemCount: comics.length,
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: columns,
+                        mainAxisSpacing: 18,
+                        crossAxisSpacing: 14,
+                        childAspectRatio: 0.50,
                       ),
-                    ),
-                  ),
-                if (comics.isEmpty)
-                  SliverFillRemaining(
-                    child: EmptyState(
-                      icon: Icons.search_off_rounded,
-                      message: context.tr('No comics match these filters.'),
-                    ),
-                  )
-                else
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
-                    sliver: SliverLayoutBuilder(
-                      builder: (context, constraints) {
-                        final width = constraints.crossAxisExtent;
-                        final columns = width >= 820
-                            ? 5
-                            : width >= 600
-                            ? 4
-                            : width >= 430
-                            ? 3
-                            : 2;
-                        return SliverGrid.builder(
-                          itemCount: comics.length,
-                          gridDelegate:
-                              SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: columns,
-                                mainAxisSpacing: 18,
-                                crossAxisSpacing: 14,
-                                childAspectRatio: 0.50,
-                              ),
-                          itemBuilder: (context, index) {
-                            final comic = comics[index];
-                            return ComicCoverCard(
-                              comic: comic,
-                              width: double.infinity,
-                              showChapter: true,
-                              onTap: () => _openComic(comic),
-                            );
-                          },
+                      itemBuilder: (context, index) {
+                        final comic = comics[index];
+                        return ComicCoverCard(
+                          comic: comic,
+                          width: double.infinity,
+                          showChapter: true,
+                          onTap: () => _openComic(comic),
                         );
                       },
-                    ),
+                    );
+                  },
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 72,
+                  child: Center(
+                    child: _loadingMore
+                        ? const CircularProgressIndicator()
+                        : _hasMore
+                        ? TextButton.icon(
+                            onPressed: _loadMore,
+                            icon: const Icon(Icons.expand_more_rounded),
+                            label: Text(context.tr('Load more')),
+                          )
+                        : const SizedBox.shrink(),
                   ),
-              ],
-            ),
-          );
-        },
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
 
-  String _statusLabel(BuildContext context, String status) {
-    return switch (status) {
-      'ONGOING' => context.tr('Ongoing'),
-      'COMPLETED' => context.tr('Completed'),
-      _ => status,
-    };
-  }
+  static const _sortOptions = [
+    'Default',
+    'Recently Added',
+    'Recently Updated',
+    'Total Views',
+    'Most Liked',
+    'Most Followed',
+    'Most Bookmarked',
+  ];
 
-  String _sortLabel(BuildContext context, String sort) {
-    return switch (sort) {
-      'default' => context.tr('Default'),
-      'rating' => context.tr('Top rated'),
-      'views' => context.tr('Most viewed'),
-      'updated' => context.tr('Recently updated'),
-      _ => sort,
-    };
-  }
+  String _statusLabel(BuildContext context, String status) => switch (status) {
+    'ONGOING' => context.tr('Ongoing'),
+    'COMPLETED' => context.tr('Completed'),
+    _ => status,
+  };
+
+  String _sortLabel(BuildContext context, String sort) => switch (sort) {
+    'Default' => context.tr('Default'),
+    'Recently Added' => context.tr('Recently added'),
+    'Recently Updated' => context.tr('Recently updated'),
+    'Total Views' => context.tr('Most viewed'),
+    'Most Liked' => context.tr('Most liked'),
+    'Most Followed' => context.tr('Most followed'),
+    'Most Bookmarked' => context.tr('Most bookmarked'),
+    _ => sort,
+  };
 }
 
 class _ExploreFilters {
   const _ExploreFilters({
-    required this.genre,
+    required this.genreIds,
     required this.status,
     required this.sort,
   });
 
-  final String? genre;
+  final Set<String> genreIds;
   final String? status;
   final String sort;
 }

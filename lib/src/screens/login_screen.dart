@@ -4,6 +4,7 @@ import "package:google_sign_in/google_sign_in.dart";
 
 import "../l10n/app_localizations.dart";
 import "../models/user_profile.dart";
+import "../models/login_device.dart";
 import "../services/api_client.dart";
 import "../widgets/common_widgets.dart";
 import "../widgets/comiverse_logo.dart";
@@ -64,6 +65,9 @@ class _LoginScreenState extends State<LoginScreen> {
       );
       if (!mounted) return;
       widget.onSignedIn(result.user);
+    } on LoginDeviceVerificationRequired catch (challenge) {
+      final result = await _showDeviceReplacement(challenge);
+      if (result != null && mounted) widget.onSignedIn(result.user);
     } catch (err) {
       if (!mounted) return;
       setState(() {
@@ -100,7 +104,9 @@ class _LoginScreenState extends State<LoginScreen> {
       if (idToken == null) {
         if (!mounted) return;
         setState(() {
-          _error = context.tr("Could not obtain Google token. Please try again.");
+          _error = context.tr(
+            "Could not obtain Google token. Please try again.",
+          );
           _isGoogleLoading = false;
         });
         return;
@@ -109,6 +115,9 @@ class _LoginScreenState extends State<LoginScreen> {
       final result = await widget.apiClient.loginWithGoogle(idToken);
       if (!mounted) return;
       widget.onSignedIn(result.user);
+    } on LoginDeviceVerificationRequired catch (challenge) {
+      final result = await _showDeviceReplacement(challenge);
+      if (result != null && mounted) widget.onSignedIn(result.user);
     } catch (err) {
       if (!mounted) return;
       setState(() {
@@ -117,6 +126,179 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _isGoogleLoading = false);
     }
+  }
+
+  Future<LoginResult?> _showDeviceReplacement(
+    LoginDeviceVerificationRequired challenge,
+  ) async {
+    final otpController = TextEditingController();
+    var selectedDeviceId = challenge.devices.firstOrNull?.id;
+    var submitting = false;
+    String? error;
+    final result = await showModalBottomSheet<LoginResult>(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              20,
+              12,
+              20,
+              20 + MediaQuery.viewInsetsOf(sheetContext).bottom,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.phonelink_lock_rounded),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          sheetContext.tr("Device limit reached"),
+                          style: Theme.of(sheetContext).textTheme.headlineSmall,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    sheetContext.tr(
+                      "ComiVerse allows up to 3 mobile devices. Select one device to remove, then enter the OTP sent to your email.",
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  RadioGroup<String>(
+                    groupValue: selectedDeviceId,
+                    onChanged: submitting
+                        ? (_) {}
+                        : (value) =>
+                              setSheetState(() => selectedDeviceId = value),
+                    child: Column(
+                      children: [
+                        for (final device in challenge.devices)
+                          Card(
+                            child: RadioListTile<String>(
+                              value: device.id,
+                              enabled: !submitting,
+                              secondary: Icon(
+                                device.platform == "ios"
+                                    ? Icons.phone_iphone_rounded
+                                    : Icons.android_rounded,
+                              ),
+                              title: Text(device.deviceName),
+                              subtitle: Text(
+                                device.lastSeenAt == null
+                                    ? sheetContext.tr("Previously verified")
+                                    : sheetContext.tr(
+                                        "Last active {date}",
+                                        values: {
+                                          "date": _compactDeviceDate(
+                                            device.lastSeenAt!,
+                                          ),
+                                        },
+                                      ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: otpController,
+                    enabled: !submitting,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    decoration: InputDecoration(
+                      labelText: sheetContext.tr("Email OTP"),
+                      prefixIcon: const Icon(Icons.password_rounded),
+                      errorText: error,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: submitting
+                              ? null
+                              : () => Navigator.pop(sheetContext),
+                          child: Text(sheetContext.tr("Cancel")),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: submitting
+                              ? null
+                              : () async {
+                                  if (selectedDeviceId == null ||
+                                      otpController.text.trim().length != 6) {
+                                    setSheetState(
+                                      () => error = sheetContext.tr(
+                                        "Select a device and enter the 6-digit OTP.",
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  setSheetState(() {
+                                    submitting = true;
+                                    error = null;
+                                  });
+                                  try {
+                                    final login = await widget.apiClient
+                                        .replaceLoginDevice(
+                                          challengeId: challenge.challengeId,
+                                          deviceToRemoveId: selectedDeviceId!,
+                                          otp: otpController.text.trim(),
+                                        );
+                                    if (sheetContext.mounted) {
+                                      Navigator.pop(sheetContext, login);
+                                    }
+                                  } catch (exception) {
+                                    if (!sheetContext.mounted) return;
+                                    setSheetState(() {
+                                      submitting = false;
+                                      error = sheetContext.localizedError(
+                                        exception,
+                                      );
+                                    });
+                                  }
+                                },
+                          child: submitting
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Text(sheetContext.tr("Verify & Replace")),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    otpController.dispose();
+    return result;
+  }
+
+  String _compactDeviceDate(DateTime value) {
+    final local = value.toLocal();
+    String two(int number) => number.toString().padLeft(2, "0");
+    return "${two(local.day)}/${two(local.month)}/${local.year} "
+        "${two(local.hour)}:${two(local.minute)}";
   }
 
   // ── sign up ─────────────────────────────────────────────────────────────────
@@ -135,9 +317,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  context.tr(
-                    "Email verified! You can now sign in.",
-                  ),
+                  context.tr("Email verified! You can now sign in."),
                 ),
                 behavior: SnackBarBehavior.floating,
               ),
@@ -199,8 +379,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           "Sign in to sync your ComiVerse account, or continue as guest to read public comics.",
                         ),
                         style: TextStyle(
-                          color:
-                              Theme.of(context).colorScheme.onSurfaceVariant,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                           height: 1.45,
                         ),
                       ),
@@ -285,8 +464,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         children: [
                           const Expanded(child: Divider()),
                           Padding(
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 12),
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
                             child: Text(
                               context.tr("or"),
                               style: TextStyle(
@@ -365,9 +543,7 @@ class _GoogleSignInButton extends StatelessWidget {
                 ? Colors.white24
                 : Theme.of(context).colorScheme.outlineVariant,
           ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
         child: loading
             ? const SizedBox.square(
@@ -403,10 +579,6 @@ class _GoogleLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Image.memory(
-      base64Decode(_base64),
-      width: size,
-      height: size,
-    );
+    return Image.memory(base64Decode(_base64), width: size, height: size);
   }
 }

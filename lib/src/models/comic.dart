@@ -85,3 +85,29 @@ class Comic {
         .toList();
   }
 }
+
+class ComicCursorPage {
+  const ComicCursorPage({
+    required this.comics,
+    required this.hasMore,
+    this.nextCursor,
+    this.nextReferenceId,
+  });
+
+  final List<Comic> comics;
+  final String? nextCursor;
+  final String? nextReferenceId;
+  final bool hasMore;
+}
+
+class GenreOption {
+  const GenreOption({required this.id, required this.name});
+
+  final String id;
+  final String name;
+
+  factory GenreOption.fromJson(Map<String, dynamic> json) => GenreOption(
+    id: (json['id'] ?? '').toString(),
+    name: (json['name'] ?? json['title'] ?? '').toString(),
+  );
+}

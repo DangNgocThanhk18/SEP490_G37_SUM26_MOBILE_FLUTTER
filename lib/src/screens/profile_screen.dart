@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../l10n/app_localizations.dart';
 import '../models/notification_preferences.dart';
+import '../models/login_device.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
 import '../services/offline_download_service.dart';
@@ -179,6 +180,12 @@ class ProfileScreen extends StatelessWidget {
                     : () => _showLanguagePicker(context),
               ),
               _SettingsTile(
+                icon: Icons.devices_rounded,
+                title: context.tr('Login devices'),
+                subtitle: context.tr('Up to 3 verified mobile devices'),
+                onTap: () => _showLoginDevices(context),
+              ),
+              _SettingsTile(
                 icon: Icons.notifications_active_outlined,
                 title: context.tr('Notification Preferences'),
                 onTap: () => _showNotificationPreferences(context),
@@ -349,6 +356,17 @@ class ProfileScreen extends StatelessWidget {
         message: context.tr('Notification preferences saved.'),
       );
     }
+  }
+
+  Future<void> _showLoginDevices(BuildContext context) async {
+    final removedCurrent = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (_) => _LoginDevicesSheet(apiClient: apiClient),
+    );
+    if (removedCurrent == true && context.mounted) onSignOut();
   }
 
   Future<void> _showLanguagePicker(BuildContext context) async {
@@ -1159,6 +1177,252 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
   }
 }
 
+class _LoginDevicesSheet extends StatefulWidget {
+  const _LoginDevicesSheet({required this.apiClient});
+
+  final ApiClient apiClient;
+
+  @override
+  State<_LoginDevicesSheet> createState() => _LoginDevicesSheetState();
+}
+
+class _LoginDevicesSheetState extends State<_LoginDevicesSheet> {
+  late Future<List<LoginDevice>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.apiClient.getLoginDevices();
+  }
+
+  void _reload() {
+    setState(() => _future = widget.apiClient.getLoginDevices());
+  }
+
+  Future<void> _remove(LoginDevice device) async {
+    final otpController = TextEditingController();
+    try {
+      final challenge = await widget.apiClient.requestLoginDeviceRevocation(
+        device.id,
+      );
+      if (!mounted) return;
+      var submitting = false;
+      String? error;
+      final confirmed = await InAppModal.show<bool>(
+        context,
+        barrierDismissible: false,
+        builder: (modalContext) => StatefulBuilder(
+          builder: (panelContext, setModalState) => InAppModalPanel(
+            title: panelContext.tr('Remove login device?'),
+            icon: Icons.phonelink_erase_rounded,
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  panelContext.tr(
+                    'Enter the OTP sent to your email to remove {device}. Offline access on that device will also be revoked.',
+                    values: {'device': device.deviceName},
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: otpController,
+                  enabled: !submitting,
+                  keyboardType: TextInputType.number,
+                  maxLength: 6,
+                  decoration: InputDecoration(
+                    labelText: panelContext.tr('Email OTP'),
+                    errorText: error,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: submitting
+                    ? null
+                    : () => Navigator.pop(modalContext, false),
+                child: Text(panelContext.tr('Cancel')),
+              ),
+              FilledButton(
+                onPressed: submitting
+                    ? null
+                    : () async {
+                        if (otpController.text.trim().length != 6) {
+                          setModalState(
+                            () => error = panelContext.tr(
+                              'Enter the 6-digit OTP.',
+                            ),
+                          );
+                          return;
+                        }
+                        setModalState(() {
+                          submitting = true;
+                          error = null;
+                        });
+                        try {
+                          await widget.apiClient.confirmLoginDeviceRevocation(
+                            challengeId: challenge.id,
+                            otp: otpController.text.trim(),
+                          );
+                          if (modalContext.mounted) {
+                            Navigator.pop(modalContext, true);
+                          }
+                        } catch (exception) {
+                          if (!panelContext.mounted) return;
+                          setModalState(() {
+                            submitting = false;
+                            error = panelContext.localizedError(exception);
+                          });
+                        }
+                      },
+                child: submitting
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(panelContext.tr('Remove')),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      if (device.current) {
+        Navigator.pop(context, true);
+      } else {
+        InAppNotifications.success(
+          context,
+          title: context.tr('Success'),
+          message: context.tr('Login device removed.'),
+        );
+        _reload();
+      }
+    } catch (exception) {
+      if (!mounted) return;
+      InAppNotifications.error(
+        context,
+        title: context.tr('Could not remove device'),
+        message: context.localizedError(exception),
+      );
+    } finally {
+      otpController.dispose();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * 0.78,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 12, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          context.tr('Login devices'),
+                          style: Theme.of(context).textTheme.headlineSmall,
+                        ),
+                        Text(
+                          context.tr('Up to 3 verified mobile devices'),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: context.tr('Close'),
+                    onPressed: () => Navigator.pop(context, false),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: FutureBuilder<List<LoginDevice>>(
+                future: _future,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError) {
+                    return ApiErrorState(
+                      error: snapshot.error!,
+                      onRetry: _reload,
+                    );
+                  }
+                  final devices = snapshot.data ?? const [];
+                  if (devices.isEmpty) {
+                    return EmptyState(
+                      icon: Icons.devices_other_rounded,
+                      message: context.tr('No verified mobile devices.'),
+                    );
+                  }
+                  return ListView.separated(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: devices.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final device = devices[index];
+                      return Card(
+                        child: ListTile(
+                          minTileHeight: 76,
+                          leading: Icon(
+                            device.platform == 'ios'
+                                ? Icons.phone_iphone_rounded
+                                : Icons.android_rounded,
+                          ),
+                          title: Text(device.deviceName),
+                          subtitle: Text(
+                            device.current
+                                ? context.tr('Current device')
+                                : context.tr(
+                                    'Last active {date}',
+                                    values: {
+                                      'date': _formatDeviceTime(
+                                        device.lastSeenAt,
+                                      ),
+                                    },
+                                  ),
+                          ),
+                          trailing: IconButton(
+                            tooltip: context.tr('Remove'),
+                            onPressed: () => _remove(device),
+                            icon: Icon(
+                              Icons.delete_outline_rounded,
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatDeviceTime(DateTime? value) {
+    if (value == null) return context.tr('Unknown');
+    final local = value.toLocal();
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(local.day)}/${two(local.month)}/${local.year} '
+        '${two(local.hour)}:${two(local.minute)}';
+  }
+}
+
 class _NotificationPreferencesSheet extends StatefulWidget {
   const _NotificationPreferencesSheet({required this.apiClient});
 
@@ -1171,11 +1435,19 @@ class _NotificationPreferencesSheet extends StatefulWidget {
 
 class _NotificationPreferencesSheetState
     extends State<_NotificationPreferencesSheet> {
-  late Future<NotificationPreferences> _future = _load();
+  late Future<NotificationPreferences> _future;
+  late Future<PushDeviceStatus> _pushStatusFuture;
   Map<String, bool> _values = {};
   bool _loaded = false;
   bool _saving = false;
   String? _saveError;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+    _pushStatusFuture = widget.apiClient.getPushDeviceStatus();
+  }
 
   Future<NotificationPreferences> _load() async {
     final preferences = await widget.apiClient.getNotificationPreferences();
@@ -1197,6 +1469,7 @@ class _NotificationPreferencesSheetState
       _saveError = null;
       _loaded = false;
       _future = _load();
+      _pushStatusFuture = widget.apiClient.getPushDeviceStatus();
     });
   }
 
@@ -1238,6 +1511,58 @@ class _NotificationPreferencesSheetState
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
+              ),
+              const SizedBox(height: 12),
+              FutureBuilder<PushDeviceStatus>(
+                future: _pushStatusFuture,
+                builder: (context, snapshot) {
+                  final status = snapshot.data;
+                  final colorScheme = Theme.of(context).colorScheme;
+                  final messageKey = snapshot.hasError
+                      ? 'Push status is temporarily unavailable.'
+                      : status == null
+                      ? 'Checking push delivery...'
+                      : !status.serverConfigured
+                      ? 'Push delivery is not configured on the server.'
+                      : status.registeredDeviceCount == 0
+                      ? 'This account has no registered push device.'
+                      : 'Push delivery is ready on {count} device(s).';
+                  return Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color:
+                          (status?.ready == true
+                                  ? colorScheme.primary
+                                  : colorScheme.surfaceContainerHighest)
+                              .withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          status?.ready == true
+                              ? Icons.notifications_active_rounded
+                              : Icons.notifications_paused_outlined,
+                          color: status?.ready == true
+                              ? colorScheme.primary
+                              : colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            context.tr(
+                              messageKey,
+                              values: {
+                                'count': status?.registeredDeviceCount ?? 0,
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
               ),
               const SizedBox(height: 12),
               Expanded(

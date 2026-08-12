@@ -45,7 +45,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<_HomeData> _load() async {
     final results = await Future.wait<_HomeSectionResult>([
-      _capture(widget.apiClient.getTopViewed(size: 8)),
+      _capture(widget.apiClient.getLeaderboard(timeframe: 'day')),
       _capture(widget.apiClient.getRecommendations(size: 10)),
       _capture(widget.apiClient.getRecentlyUpdated(size: 8)),
       if (widget.apiClient.hasToken)

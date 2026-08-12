@@ -73,7 +73,7 @@ class _PartiallyFailingApiClient extends ApiClient {
   );
 
   @override
-  Future<List<Comic>> getTopViewed({int size = 10}) async {
+  Future<List<Comic>> getLeaderboard({String timeframe = 'all'}) async {
     throw const ApiException('Trending is temporarily unavailable.');
   }
 
@@ -102,7 +102,8 @@ class _PersonalizationFailingApiClient extends ApiClient {
   bool get hasToken => true;
 
   @override
-  Future<List<Comic>> getTopViewed({int size = 10}) async => const [comic];
+  Future<List<Comic>> getLeaderboard({String timeframe = 'all'}) async =>
+      const [comic];
 
   @override
   Future<List<Comic>> getRecentlyUpdated({int size = 10}) async => const [

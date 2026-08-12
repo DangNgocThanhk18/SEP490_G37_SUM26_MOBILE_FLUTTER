@@ -286,6 +286,24 @@ class _FakeApiClient extends ApiClient {
   Future<List<Comic>> getComics() async => comics;
 
   @override
+  Future<List<Comic>> getLeaderboard({String timeframe = 'all'}) async =>
+      comics;
+
+  @override
+  Future<List<GenreOption>> getGenres() async => const [];
+
+  @override
+  Future<ComicCursorPage> exploreComics({
+    String? cursor,
+    String? referenceId,
+    Iterable<String> genreIds = const [],
+    String? publicationStatus,
+    String sortBy = 'Default',
+    int size = 15,
+  }) async =>
+      ComicCursorPage(comics: comics.take(size).toList(), hasMore: false);
+
+  @override
   Future<List<Comic>> getTopViewed({int size = 10}) async =>
       comics.take(size).toList();
 
@@ -375,6 +393,22 @@ class _CountingShellApiClient extends _FakeApiClient {
   Future<List<Comic>> getComics() async {
     comicsCalls++;
     return _FakeApiClient.comics;
+  }
+
+  @override
+  Future<ComicCursorPage> exploreComics({
+    String? cursor,
+    String? referenceId,
+    Iterable<String> genreIds = const [],
+    String? publicationStatus,
+    String sortBy = 'Default',
+    int size = 15,
+  }) async {
+    comicsCalls++;
+    return ComicCursorPage(
+      comics: _FakeApiClient.comics.take(size).toList(),
+      hasMore: false,
+    );
   }
 
   @override

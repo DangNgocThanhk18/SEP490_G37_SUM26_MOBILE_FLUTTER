@@ -8,6 +8,7 @@ import 'package:comiverse_mobile/src/models/offline_download.dart';
 import 'package:comiverse_mobile/src/models/user_profile.dart';
 import 'package:comiverse_mobile/src/services/api_client.dart';
 import 'package:comiverse_mobile/src/services/offline_download_service.dart';
+import 'package:comiverse_mobile/src/services/offline_decrypted_cache_contract.dart';
 import 'package:comiverse_mobile/src/services/offline_platform_security.dart';
 import 'package:comiverse_mobile/src/services/session_storage.dart';
 
@@ -146,6 +147,7 @@ void main() {
         apiClient: ApiClient(),
         secureStorage: storage,
         platformSecurity: platform,
+        decryptedPageCache: _MemoryDecryptedCache(),
         licenseVerifier: _StaticVerifier({'license': claims}),
       );
       await service.bindAccount(
@@ -337,6 +339,44 @@ class _MemoryStorage implements SessionStorage {
 
   @override
   Future<void> write(String key, String value) async => values[key] = value;
+}
+
+class _MemoryDecryptedCache implements OfflineDecryptedPageCache {
+  final values = <String, Uint8List>{};
+
+  String _key(String account, String chapter, String package, int page) =>
+      '$account:$chapter:$package:$page';
+
+  @override
+  Future<void> clearAll() async => values.clear();
+
+  @override
+  Future<void> deleteChapter({
+    required String accountScope,
+    required String chapterId,
+  }) async {
+    values.removeWhere((key, _) => key.startsWith('$accountScope:$chapterId:'));
+  }
+
+  @override
+  Future<Uint8List?> read({
+    required String accountScope,
+    required String chapterId,
+    required String packageSha256,
+    required int pageNumber,
+  }) async => values[_key(accountScope, chapterId, packageSha256, pageNumber)];
+
+  @override
+  Future<void> write({
+    required String accountScope,
+    required String chapterId,
+    required String packageSha256,
+    required int pageNumber,
+    required Uint8List bytes,
+  }) async {
+    values[_key(accountScope, chapterId, packageSha256, pageNumber)] =
+        Uint8List.fromList(bytes);
+  }
 }
 
 class _StaticVerifier implements OfflineLicenseVerifier {

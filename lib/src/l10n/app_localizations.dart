@@ -167,6 +167,30 @@ const Map<String, String> _vietnamese = {
   'No offline devices are registered.':
       'Chưa có thiết bị ngoại tuyến nào được đăng ký.',
   'Current device': 'Thiết bị hiện tại',
+  'Login devices': 'Thiết bị đăng nhập',
+  'Up to 3 verified mobile devices': 'Tối đa 3 thiết bị di động đã xác minh',
+  'No verified mobile devices.': 'Chưa có thiết bị di động nào được xác minh.',
+  'Device limit reached': 'Đã đạt giới hạn thiết bị',
+  'ComiVerse allows up to 3 mobile devices. Select one device to remove, then enter the OTP sent to your email.':
+      'ComiVerse cho phép tối đa 3 thiết bị di động. Chọn một thiết bị để xóa rồi nhập OTP được gửi đến email của bạn.',
+  'Previously verified': 'Đã xác minh trước đây',
+  'Last active {date}': 'Hoạt động gần nhất {date}',
+  'Email OTP': 'OTP qua email',
+  'Enter the 6-digit OTP.': 'Nhập OTP gồm 6 chữ số.',
+  'Remove login device?': 'Xóa thiết bị đăng nhập?',
+  'Enter the OTP sent to your email to remove {device}. Offline access on that device will also be revoked.':
+      'Nhập OTP được gửi đến email để xóa {device}. Quyền đọc ngoại tuyến trên thiết bị đó cũng sẽ bị thu hồi.',
+  'Login device removed.': 'Đã xóa thiết bị đăng nhập.',
+  'Could not remove device': 'Không thể xóa thiết bị',
+  'Push status is temporarily unavailable.':
+      'Tạm thời không thể kiểm tra trạng thái thông báo đẩy.',
+  'Checking push delivery...': 'Đang kiểm tra thông báo đẩy...',
+  'Push delivery is not configured on the server.':
+      'Máy chủ chưa được cấu hình thông báo đẩy.',
+  'This account has no registered push device.':
+      'Tài khoản này chưa có thiết bị nhận thông báo đẩy.',
+  'Push delivery is ready on {count} device(s).':
+      'Thông báo đẩy đã sẵn sàng trên {count} thiết bị.',
   'Last verified {date}': 'Xác minh gần nhất {date}',
   'Revoke offline device?': 'Thu hồi thiết bị ngoại tuyến?',
   'This is the current device. Revoking it removes all local downloads and requires device enrollment again.':
@@ -215,6 +239,9 @@ const Map<String, String> _vietnamese = {
   'Mark all as read': 'Đánh dấu tất cả đã đọc',
   'Monthly': 'Tháng',
   'Most viewed': 'Xem nhiều nhất',
+  'Most liked': 'Được thích nhiều nhất',
+  'Most followed': 'Được theo dõi nhiều nhất',
+  'Most bookmarked': 'Được lưu nhiều nhất',
   'New': 'Mới',
   'New chapters': 'Chương mới',
   'New password': 'Mật khẩu mới',
@@ -268,6 +295,8 @@ const Map<String, String> _vietnamese = {
   'Reader options': 'Tùy chọn đọc',
   'Recent': 'Gần đây',
   'Recently updated': 'Mới cập nhật',
+  'Recently added': 'Mới thêm',
+  'Load more': 'Tải thêm',
   'Recommended for You': 'Đề xuất cho bạn',
   'Remove': 'Xóa',
   'Remove comic?': 'Xóa truyện?',
