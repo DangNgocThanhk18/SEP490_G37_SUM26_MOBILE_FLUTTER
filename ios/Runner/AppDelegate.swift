@@ -46,9 +46,7 @@ private final class OfflineSecurityPlugin: NSObject, FlutterPlugin {
     let messenger = registrar.messenger()
     let channel = FlutterMethodChannel(
       name: channelName,
-      binaryMessenger: messenger,
-      codec: FlutterStandardMethodCodec.sharedInstance(),
-      taskQueue: messenger.makeBackgroundTaskQueue()
+      binaryMessenger: messenger
     )
     registrar.addMethodCallDelegate(OfflineSecurityPlugin(), channel: channel)
   }
