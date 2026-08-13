@@ -41,9 +41,24 @@ abstract interface class OfflinePlatformSecurity {
     required Uint8List aad,
   });
 
+  /// Seals a prepared page with a random AES-256-GCM session key that only
+  /// exists in native process memory. The returned frame is safe to cache on
+  /// disk, but becomes unreadable after the app is backgrounded or killed.
+  Future<Uint8List> sealTransientPage({
+    required Uint8List plaintext,
+    required Uint8List aad,
+  });
+
+  Future<Uint8List> openTransientPage({
+    required Uint8List sealedPage,
+    required Uint8List aad,
+  });
+
   Future<OfflinePlatformClock> readClock();
 
   Future<void> clearTransientKeys();
+
+  Future<void> protectOfflineFile(String path);
 
   Future<void> deleteIdentity(String accountScope);
 }
@@ -53,6 +68,7 @@ class NativeOfflinePlatformSecurity implements OfflinePlatformSecurity {
     : _channel = channel ?? const MethodChannel(_channelName);
 
   static const _channelName = 'comiverse/offline_security';
+  static const _transientCacheMagic = <int>[0x43, 0x56, 0x53, 0x43, 0x31];
   final MethodChannel _channel;
 
   @override
@@ -130,6 +146,48 @@ class NativeOfflinePlatformSecurity implements OfflinePlatformSecurity {
   }
 
   @override
+  Future<Uint8List> sealTransientPage({
+    required Uint8List plaintext,
+    required Uint8List aad,
+  }) async {
+    final result = await _channel.invokeMethod<Uint8List>('sealTransientPage', {
+      'plaintext': plaintext,
+      'aad': aad,
+    });
+    if (result == null || !_hasTransientCacheFrame(result)) {
+      throw PlatformException(
+        code: 'cache_encryption_failed',
+        message: 'The offline page cache could not be encrypted.',
+      );
+    }
+    return Uint8List.fromList(result);
+  }
+
+  @override
+  Future<Uint8List> openTransientPage({
+    required Uint8List sealedPage,
+    required Uint8List aad,
+  }) async {
+    if (!_hasTransientCacheFrame(sealedPage)) {
+      throw PlatformException(
+        code: 'cache_decryption_failed',
+        message: 'The sealed offline page cache is invalid.',
+      );
+    }
+    final result = await _channel.invokeMethod<Uint8List>('openTransientPage', {
+      'sealedPage': sealedPage,
+      'aad': aad,
+    });
+    if (result == null || result.isEmpty) {
+      throw PlatformException(
+        code: 'cache_decryption_failed',
+        message: 'The offline page cache could not be decrypted.',
+      );
+    }
+    return Uint8List.fromList(result);
+  }
+
+  @override
   Future<OfflinePlatformClock> readClock() async {
     final result = await _channel.invokeMapMethod<String, dynamic>('readClock');
     final elapsed = result?['elapsedRealtimeMillis'];
@@ -151,6 +209,18 @@ class NativeOfflinePlatformSecurity implements OfflinePlatformSecurity {
       _channel.invokeMethod('clearTransientKeys');
 
   @override
+  Future<void> protectOfflineFile(String path) =>
+      _channel.invokeMethod('protectOfflineFile', {'path': path});
+
+  @override
   Future<void> deleteIdentity(String accountScope) =>
       _channel.invokeMethod('deleteIdentity', {'accountScope': accountScope});
+
+  static bool _hasTransientCacheFrame(Uint8List bytes) {
+    if (bytes.length <= _transientCacheMagic.length + 28) return false;
+    for (var index = 0; index < _transientCacheMagic.length; index++) {
+      if (bytes[index] != _transientCacheMagic[index]) return false;
+    }
+    return true;
+  }
 }

@@ -25,6 +25,12 @@ class PrivateOfflineDownloadStore implements OfflineDownloadStore {
       _unsupported();
 
   @override
+  Future<String> packagePath({
+    required String accountScope,
+    required String chapterId,
+  }) async => _unsupported();
+
+  @override
   Future<void> discardStagedPackage(StagedOfflinePackage package) async =>
       _unsupported();
 

@@ -412,6 +412,17 @@ class OfflineDownloadService extends ChangeNotifier {
       );
       await store.commitPackage(staged);
       staged = null;
+      try {
+        await platformSecurity.protectOfflineFile(
+          await store.packagePath(accountScope: account, chapterId: chapter.id),
+        );
+      } catch (_) {
+        await store.deletePackage(accountScope: account, chapterId: chapter.id);
+        throw const OfflineDownloadException(
+          'storage_protection_failed',
+          'The downloaded chapter could not be secured on this device.',
+        );
+      }
       await _writeEntry(account, entry);
       await decryptedPageCache.deleteChapter(
         accountScope: account,
@@ -535,6 +546,7 @@ class OfflineDownloadService extends ChangeNotifier {
   }
 
   Future<Uint8List> readPage(String offlineUri) async {
+    final requestEpoch = _decryptionEpoch;
     if (!_isForeground) {
       throw const OfflineDownloadException(
         'app_backgrounded',
@@ -542,10 +554,17 @@ class OfflineDownloadService extends ChangeNotifier {
       );
     }
     final cached = getCachedPage(offlineUri);
-    if (cached != null) return cached;
+    if (cached != null) {
+      if (!_isForeground || requestEpoch != _decryptionEpoch) {
+        releasePageBytes(cached);
+        _ensureActiveDecryption(requestEpoch);
+      }
+      return cached;
+    }
     final active = _activePageReads[offlineUri];
     if (active != null) {
       final bytes = await active;
+      _ensureActiveDecryption(requestEpoch, plaintext: bytes);
       _retainPageBytes(bytes);
       return bytes;
     }
@@ -554,6 +573,7 @@ class OfflineDownloadService extends ChangeNotifier {
     _activePageReads[offlineUri] = operation;
     try {
       final bytes = await operation;
+      _ensureActiveDecryption(requestEpoch, plaintext: bytes);
       _retainPageBytes(bytes);
       return bytes;
     } finally {
@@ -562,6 +582,7 @@ class OfflineDownloadService extends ChangeNotifier {
   }
 
   Future<Uint8List> _readPage(String offlineUri) async {
+    final operationEpoch = _decryptionEpoch;
     final uri = Uri.tryParse(offlineUri);
     if (uri == null || uri.scheme != 'comiverse-offline') {
       throw const OfflineDownloadException(
@@ -598,31 +619,50 @@ class OfflineDownloadService extends ChangeNotifier {
       );
     }
     final page = entry.manifest.page(pageNumber);
-    final prepared = await decryptedPageCache.read(
+    final sealedPrepared = await decryptedPageCache.read(
       accountScope: _requireAccount(),
       chapterId: entry.chapterId,
       packageSha256: entry.packageSha256,
       pageNumber: pageNumber,
     );
-    if (prepared != null) {
+    if (sealedPrepared != null) {
       final preparedKey = _preparedPageKey(entry, pageNumber);
-      final validLength = prepared.length == page.plaintextLength;
-      final valid =
-          validLength &&
-          (_verifiedPreparedPages.contains(preparedKey) ||
-              await compute(_computeSha256, prepared) == page.pageSha256);
-      if (valid) {
-        _verifiedPreparedPages.add(preparedKey);
-        _rememberPage(offlineUri, prepared);
-        return prepared;
+      try {
+        final prepared = await platformSecurity.openTransientPage(
+          sealedPage: sealedPrepared,
+          aad: _preparedPageAad(entry, pageNumber),
+        );
+        final validLength = prepared.length == page.plaintextLength;
+        final valid =
+            validLength &&
+            (_verifiedPreparedPages.contains(preparedKey) ||
+                await compute(_computeSha256, prepared) == page.pageSha256);
+        if (valid) {
+          _ensureActiveDecryption(operationEpoch, plaintext: prepared);
+          _verifiedPreparedPages.add(preparedKey);
+          _rememberPage(offlineUri, prepared);
+          return prepared;
+        }
+        _clearBytes(prepared);
+      } catch (_) {
+        // A cache from an older process has no matching in-memory session key.
+        // Drop it and decrypt the authenticated CVPK page instead.
+      } finally {
+        _clearBytes(sealedPrepared);
       }
-      _clearBytes(prepared);
+      _ensureActiveDecryption(operationEpoch);
+      _verifiedPreparedPages.remove(preparedKey);
+      await decryptedPageCache.deleteChapter(
+        accountScope: _requireAccount(),
+        chapterId: entry.chapterId,
+      );
     }
     return _decryptPage(
       session: session,
       pageNumber: pageNumber,
       offlineUri: offlineUri,
       keepInMemory: true,
+      operationEpoch: operationEpoch,
     );
   }
 
@@ -643,6 +683,7 @@ class OfflineDownloadService extends ChangeNotifier {
     required int pageNumber,
     required String offlineUri,
     required bool keepInMemory,
+    required int operationEpoch,
   }) async {
     final entry = session.entry;
     final claims = session.claims;
@@ -680,14 +721,11 @@ class OfflineDownloadService extends ChangeNotifier {
           'The decrypted page failed its integrity check.',
         );
       }
-      await decryptedPageCache.write(
-        accountScope: _requireAccount(),
-        chapterId: entry.chapterId,
-        packageSha256: entry.packageSha256,
-        pageNumber: pageNumber,
-        bytes: plaintext,
+      _ensureActiveDecryption(operationEpoch, plaintext: plaintext);
+      unawaited(
+        _cachePreparedPage(entry, pageNumber, plaintext, operationEpoch),
       );
-      _verifiedPreparedPages.add(_preparedPageKey(entry, pageNumber));
+      _ensureActiveDecryption(operationEpoch, plaintext: plaintext);
       if (keepInMemory) {
         _rememberPage(offlineUri, plaintext);
       }
@@ -702,6 +740,73 @@ class OfflineDownloadService extends ChangeNotifier {
     } finally {
       _clearBytes(encrypted);
     }
+  }
+
+  Future<void> _cachePreparedPage(
+    OfflineDownloadEntry entry,
+    int pageNumber,
+    Uint8List plaintext,
+    int operationEpoch,
+  ) async {
+    Uint8List? sealed;
+    try {
+      sealed = await platformSecurity.sealTransientPage(
+        plaintext: plaintext,
+        aad: _preparedPageAad(entry, pageNumber),
+      );
+      if (!_isForeground || operationEpoch != _decryptionEpoch) return;
+      final ownedSealed = sealed;
+      sealed = null;
+      unawaited(
+        _persistPreparedPage(entry, pageNumber, ownedSealed, operationEpoch),
+      );
+    } catch (_) {
+      // The authenticated CVPK package remains the source of truth. Cache
+      // failures must not prevent reading a valid downloaded chapter.
+    } finally {
+      if (sealed != null) _clearBytes(sealed);
+    }
+  }
+
+  Future<void> _persistPreparedPage(
+    OfflineDownloadEntry entry,
+    int pageNumber,
+    Uint8List sealed,
+    int operationEpoch,
+  ) async {
+    try {
+      await decryptedPageCache.write(
+        accountScope: _requireAccount(),
+        chapterId: entry.chapterId,
+        packageSha256: entry.packageSha256,
+        pageNumber: pageNumber,
+        bytes: sealed,
+      );
+      if (_isForeground && operationEpoch == _decryptionEpoch) {
+        _verifiedPreparedPages.add(_preparedPageKey(entry, pageNumber));
+      }
+    } catch (_) {
+      // Rendering already uses the authenticated in-memory page.
+    } finally {
+      _clearBytes(sealed);
+    }
+  }
+
+  Uint8List _preparedPageAad(OfflineDownloadEntry entry, int pageNumber) =>
+      Uint8List.fromList(
+        utf8.encode(
+          'CV-CACHE-V1|${_accountHash(_requireAccount())}|${entry.chapterId}|'
+          '${entry.packageSha256}|$pageNumber',
+        ),
+      );
+
+  void _ensureActiveDecryption(int operationEpoch, {Uint8List? plaintext}) {
+    if (_isForeground && operationEpoch == _decryptionEpoch) return;
+    if (plaintext != null) _clearBytes(plaintext);
+    throw const OfflineDownloadException(
+      'app_backgrounded',
+      'Offline pages are locked while the app is in the background.',
+    );
   }
 
   void _rememberPage(String offlineUri, Uint8List bytes) {

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +10,7 @@ import 'package:comiverse_mobile/src/models/user_profile.dart';
 import 'package:comiverse_mobile/src/services/api_client.dart';
 import 'package:comiverse_mobile/src/services/offline_download_service.dart';
 import 'package:comiverse_mobile/src/services/offline_decrypted_cache_contract.dart';
+import 'package:comiverse_mobile/src/services/offline_decrypted_cache_io.dart';
 import 'package:comiverse_mobile/src/services/offline_platform_security.dart';
 import 'package:comiverse_mobile/src/services/session_storage.dart';
 
@@ -59,6 +61,63 @@ void main() {
 
       expect(() => signature[0] = 0, returnsNormally);
       expect(signature.first, 0);
+    });
+
+    test('copies sealed cache frames and opened plaintext', () async {
+      var invocation = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            invocation++;
+            expect(
+              call.method,
+              invocation == 1 ? 'sealTransientPage' : 'openTransientPage',
+            );
+            return Uint8List.fromList(
+              invocation == 1
+                  ? [0x43, 0x56, 0x53, 0x43, 0x31, ...List<int>.filled(29, 7)]
+                  : [1, 2, 3],
+            ).asUnmodifiableView();
+          });
+      const security = NativeOfflinePlatformSecurity(channel: channel);
+
+      final sealed = await security.sealTransientPage(
+        plaintext: Uint8List.fromList([1, 2, 3]),
+        aad: Uint8List.fromList([4]),
+      );
+      final opened = await security.openTransientPage(
+        sealedPage: sealed,
+        aad: Uint8List.fromList([4]),
+      );
+
+      expect(() => sealed[0] = 0, returnsNormally);
+      expect(() => opened[0] = 0, returnsNormally);
+    });
+
+    test('rejects plaintext masquerading as a sealed cache frame', () async {
+      const security = NativeOfflinePlatformSecurity(channel: channel);
+
+      await expectLater(
+        security.openTransientPage(
+          sealedPage: Uint8List.fromList(List<int>.filled(64, 7)),
+          aad: Uint8List.fromList([1]),
+        ),
+        throwsA(isA<PlatformException>()),
+      );
+    });
+
+    test('disk cache refuses pages without the sealed frame marker', () async {
+      const cache = PrivateOfflineDecryptedPageCache();
+
+      await expectLater(
+        cache.write(
+          accountScope: 'user-1',
+          chapterId: 'chapter-1',
+          packageSha256: 'a' * 64,
+          pageNumber: 1,
+          bytes: Uint8List.fromList(List<int>.filled(64, 7)),
+        ),
+        throwsA(isA<FileSystemException>()),
+      );
     });
   });
 
@@ -470,7 +529,22 @@ class _FakePlatformSecurity implements OfflinePlatformSecurity {
   Future<bool> isSupported() async => true;
 
   @override
+  Future<Uint8List> openTransientPage({
+    required Uint8List sealedPage,
+    required Uint8List aad,
+  }) async => Uint8List.fromList(sealedPage);
+
+  @override
+  Future<void> protectOfflineFile(String path) async {}
+
+  @override
   Future<OfflinePlatformClock> readClock() async => clock;
+
+  @override
+  Future<Uint8List> sealTransientPage({
+    required Uint8List plaintext,
+    required Uint8List aad,
+  }) async => Uint8List.fromList(plaintext);
 
   @override
   Future<Uint8List> signEnrollmentChallenge({

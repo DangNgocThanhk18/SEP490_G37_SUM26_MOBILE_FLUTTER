@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.system.Os
 import android.util.Base64
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
@@ -17,9 +18,11 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.StandardMethodCodec
 import java.nio.charset.StandardCharsets
+import java.io.File
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.security.Signature
 import java.security.spec.MGF1ParameterSpec
 import java.security.spec.PSSParameterSpec
@@ -37,7 +40,14 @@ class MainActivity : FlutterActivity() {
         private const val EXTERNAL_CHECKOUT_CHANNEL = "comiverse/external_checkout"
         private const val NOTIFICATION_CHANNEL = "comiverse_activity"
         private const val OFFLINE_KEY_PREFIX = "comiverse_offline_rsa_v1_"
+        private val TRANSIENT_CACHE_MAGIC = "CVSC1".toByteArray(StandardCharsets.US_ASCII)
+        private const val GCM_NONCE_BYTES = 12
+        private const val GCM_TAG_BYTES = 16
+        private const val MAXIMUM_PLAINTEXT_PAGE_BYTES = 12 * 1024 * 1024
         private val transientContentKeys = ConcurrentHashMap<String, ByteArray>()
+        private val transientCacheKeyLock = Any()
+        private var transientPageCacheKey: ByteArray? = null
+        private val secureRandom = SecureRandom()
     }
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
@@ -193,8 +203,88 @@ class MainActivity : FlutterActivity() {
                         val decryptedPage = pageCipher.doFinal(encryptedPage)
                         result.success(decryptedPage)
                     }
+                    "sealTransientPage" -> {
+                        val plaintext = call.argument<ByteArray>("plaintext")
+                            ?: throw IllegalArgumentException("plaintext is required")
+                        val aad = call.argument<ByteArray>("aad")
+                            ?: throw IllegalArgumentException("aad is required")
+                        require(plaintext.isNotEmpty() && plaintext.size <= MAXIMUM_PLAINTEXT_PAGE_BYTES) {
+                            "Plaintext page has an invalid size"
+                        }
+                        require(aad.isNotEmpty() && aad.size <= 4096) { "Cache AAD has an invalid size" }
+
+                        val cacheKey = transientPageCacheKey(create = true)
+                        val nonce = ByteArray(GCM_NONCE_BYTES).also(secureRandom::nextBytes)
+                        try {
+                            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                            cipher.init(
+                                Cipher.ENCRYPT_MODE,
+                                SecretKeySpec(cacheKey, "AES"),
+                                GCMParameterSpec(128, nonce),
+                            )
+                            cipher.updateAAD(aad)
+                            val ciphertext = cipher.doFinal(plaintext)
+                            val frame = ByteArray(TRANSIENT_CACHE_MAGIC.size + nonce.size + ciphertext.size)
+                            TRANSIENT_CACHE_MAGIC.copyInto(frame)
+                            nonce.copyInto(frame, destinationOffset = TRANSIENT_CACHE_MAGIC.size)
+                            ciphertext.copyInto(
+                                frame,
+                                destinationOffset = TRANSIENT_CACHE_MAGIC.size + nonce.size,
+                            )
+                            result.success(frame)
+                        } finally {
+                            cacheKey.fill(0)
+                            nonce.fill(0)
+                        }
+                    }
+                    "openTransientPage" -> {
+                        val frame = call.argument<ByteArray>("sealedPage")
+                            ?: throw IllegalArgumentException("sealedPage is required")
+                        val aad = call.argument<ByteArray>("aad")
+                            ?: throw IllegalArgumentException("aad is required")
+                        require(
+                            frame.size > TRANSIENT_CACHE_MAGIC.size + GCM_NONCE_BYTES + GCM_TAG_BYTES &&
+                                frame.size <= MAXIMUM_PLAINTEXT_PAGE_BYTES + TRANSIENT_CACHE_MAGIC.size +
+                                GCM_NONCE_BYTES + GCM_TAG_BYTES,
+                        ) { "Sealed cache page has an invalid size" }
+                        require(
+                            frame.copyOfRange(0, TRANSIENT_CACHE_MAGIC.size)
+                                .contentEquals(TRANSIENT_CACHE_MAGIC),
+                        ) {
+                            "Sealed cache page version is unsupported"
+                        }
+                        require(aad.isNotEmpty() && aad.size <= 4096) { "Cache AAD has an invalid size" }
+
+                        val cacheKey = transientPageCacheKey(create = false)
+                        val nonceStart = TRANSIENT_CACHE_MAGIC.size
+                        val nonce = frame.copyOfRange(nonceStart, nonceStart + GCM_NONCE_BYTES)
+                        val ciphertext = frame.copyOfRange(nonceStart + GCM_NONCE_BYTES, frame.size)
+                        try {
+                            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                            cipher.init(
+                                Cipher.DECRYPT_MODE,
+                                SecretKeySpec(cacheKey, "AES"),
+                                GCMParameterSpec(128, nonce),
+                            )
+                            cipher.updateAAD(aad)
+                            result.success(cipher.doFinal(ciphertext))
+                        } finally {
+                            cacheKey.fill(0)
+                            nonce.fill(0)
+                        }
+                    }
                     "clearTransientKeys" -> {
-                        clearTransientContentKeys()
+                        clearTransientSecrets()
+                        result.success(null)
+                    }
+                    "protectOfflineFile" -> {
+                        val rawPath = requiredText(call.argument<String>("path"), "path")
+                        val file = File(rawPath).canonicalFile
+                        val privateRoot = filesDir.canonicalFile
+                        require(file.toPath().startsWith(privateRoot.toPath()) && file.isFile) {
+                            "Offline package path is outside app-private storage"
+                        }
+                        Os.chmod(file.path, 0x180) // Owner read/write only (0600).
                         result.success(null)
                     }
                     "readClock" -> {
@@ -210,7 +300,7 @@ class MainActivity : FlutterActivity() {
                     }
                     "deleteIdentity" -> {
                         val scope = requiredText(call.argument<String>("accountScope"), "accountScope")
-                        clearTransientContentKeys()
+                        clearTransientSecrets()
                         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
                         val alias = offlineKeyAlias(scope)
                         if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias)
@@ -277,6 +367,29 @@ class MainActivity : FlutterActivity() {
     private fun clearTransientContentKeys() {
         transientContentKeys.values.forEach { it.fill(0) }
         transientContentKeys.clear()
+    }
+
+    private fun transientPageCacheKey(create: Boolean): ByteArray = synchronized(transientCacheKeyLock) {
+        var key = transientPageCacheKey
+        if (key == null && create) {
+            key = ByteArray(32).also(secureRandom::nextBytes)
+            transientPageCacheKey = key
+        }
+        require(key != null) { "The transient cache key is no longer available" }
+        key.copyOf()
+    }
+
+    private fun clearTransientSecrets() {
+        clearTransientContentKeys()
+        synchronized(transientCacheKeyLock) {
+            transientPageCacheKey?.fill(0)
+            transientPageCacheKey = null
+        }
+    }
+
+    override fun onDestroy() {
+        clearTransientSecrets()
+        super.onDestroy()
     }
 
     private fun offlineKeyAlias(accountScope: String): String {

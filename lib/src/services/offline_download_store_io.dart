@@ -83,6 +83,15 @@ class PrivateOfflineDownloadStore implements OfflineDownloadStore {
   }
 
   @override
+  Future<String> packagePath({
+    required String accountScope,
+    required String chapterId,
+  }) async {
+    final directory = await _accountDirectory(accountScope);
+    return _packagePath(directory, chapterId);
+  }
+
+  @override
   Future<void> discardStagedPackage(StagedOfflinePackage package) async {
     final directory = await _accountDirectory(package.accountScope);
     final staged = File(_stagedPath(directory, package.chapterId));

@@ -126,6 +126,8 @@ private final class OfflineSecurityPlugin: NSObject, FlutterPlugin {
   private static let keyPrefix = "comiverse_offline_rsa_v1_"
   private static let maximumChallengeBytes = 4096
   private static let maximumEncryptedPageBytes = 12 * 1024 * 1024 + 16
+  private static let maximumPlaintextPageBytes = 12 * 1024 * 1024
+  private static let transientCacheMagic = Data("CVSC1".utf8)
 
   private let cryptoQueue = DispatchQueue(
     label: "comiverse.offline-security",
@@ -134,6 +136,7 @@ private final class OfflineSecurityPlugin: NSObject, FlutterPlugin {
   )
   private let transientKeyLock = NSLock()
   private var transientContentKeys: [String: SymmetricKey] = [:]
+  private var transientPageCacheKey: Data?
 
   static func register(with registrar: FlutterPluginRegistrar) {
     let messenger = registrar.messenger()
@@ -231,8 +234,59 @@ private final class OfflineSecurityPlugin: NSObject, FlutterPlugin {
           )
           value = FlutterStandardTypedData(bytes: plaintext)
 
+        case "sealTransientPage":
+          let plaintext = try self.requiredData(call, key: "plaintext")
+          let aad = try self.requiredData(call, key: "aad")
+          guard !plaintext.isEmpty,
+                plaintext.count <= Self.maximumPlaintextPageBytes else {
+            throw OfflineSecurityError("The plaintext cache page has an invalid size.")
+          }
+          guard !aad.isEmpty, aad.count <= 4096 else {
+            throw OfflineSecurityError("The cache AAD has an invalid size.")
+          }
+          let cacheKey = try self.transientCacheKey(create: true)
+          let box = try AES.GCM.seal(
+            plaintext,
+            using: cacheKey,
+            authenticating: aad
+          )
+          guard let combined = box.combined else {
+            throw OfflineSecurityError("The cache page could not be sealed.")
+          }
+          var frame = Self.transientCacheMagic
+          frame.append(combined)
+          value = FlutterStandardTypedData(bytes: frame)
+
+        case "openTransientPage":
+          let frame = try self.requiredData(call, key: "sealedPage")
+          let aad = try self.requiredData(call, key: "aad")
+          guard frame.count > Self.transientCacheMagic.count + 28,
+                frame.count <= Self.maximumPlaintextPageBytes
+                  + Self.transientCacheMagic.count + 28,
+                frame.starts(with: Self.transientCacheMagic) else {
+            throw OfflineSecurityError("The sealed cache page is invalid.")
+          }
+          guard !aad.isEmpty, aad.count <= 4096 else {
+            throw OfflineSecurityError("The cache AAD has an invalid size.")
+          }
+          let cacheKey = try self.transientCacheKey(create: false)
+          let box = try AES.GCM.SealedBox(
+            combined: Data(frame.dropFirst(Self.transientCacheMagic.count))
+          )
+          let plaintext = try AES.GCM.open(
+            box,
+            using: cacheKey,
+            authenticating: aad
+          )
+          value = FlutterStandardTypedData(bytes: plaintext)
+
         case "clearTransientKeys":
           self.clearTransientContentKeys()
+          value = nil
+
+        case "protectOfflineFile":
+          let path = try self.requiredText(call, key: "path")
+          try self.protectOfflineFile(path)
           value = nil
 
         case "readClock":
@@ -409,7 +463,61 @@ private final class OfflineSecurityPlugin: NSObject, FlutterPlugin {
   private func clearTransientContentKeys() {
     transientKeyLock.lock()
     transientContentKeys.removeAll(keepingCapacity: false)
+    let cacheKeyCount = transientPageCacheKey?.count ?? 0
+    transientPageCacheKey?.resetBytes(in: 0..<cacheKeyCount)
+    transientPageCacheKey = nil
     transientKeyLock.unlock()
+  }
+
+  private func transientCacheKey(create: Bool) throws -> SymmetricKey {
+    transientKeyLock.lock()
+    defer { transientKeyLock.unlock() }
+    if transientPageCacheKey == nil && create {
+      var bytes = Data(count: 32)
+      let status: OSStatus = bytes.withUnsafeMutableBytes {
+        (pointer: UnsafeMutableRawBufferPointer) -> OSStatus in
+        guard let address = pointer.baseAddress else { return errSecParam }
+        return SecRandomCopyBytes(kSecRandomDefault, 32, address)
+      }
+      guard status == errSecSuccess else {
+        bytes.resetBytes(in: 0..<bytes.count)
+        throw OfflineSecurityError("A secure transient cache key could not be generated.")
+      }
+      transientPageCacheKey = bytes
+    }
+    guard let key = transientPageCacheKey else {
+      throw OfflineSecurityError("The transient cache key is no longer available.")
+    }
+    return SymmetricKey(data: key)
+  }
+
+  private func protectOfflineFile(_ path: String) throws {
+    let fileManager = FileManager.default
+    let fileURL = URL(fileURLWithPath: path)
+      .resolvingSymlinksInPath()
+      .standardizedFileURL
+    guard let supportURL = fileManager.urls(
+      for: .applicationSupportDirectory,
+      in: .userDomainMask
+    ).first?.resolvingSymlinksInPath().standardizedFileURL else {
+      throw OfflineSecurityError("Application Support storage is unavailable.")
+    }
+    let supportPrefix = supportURL.path.hasSuffix("/")
+      ? supportURL.path
+      : supportURL.path + "/"
+    guard fileURL.path.hasPrefix(supportPrefix),
+          fileManager.fileExists(atPath: fileURL.path) else {
+      throw OfflineSecurityError("Offline package path is outside app-private storage.")
+    }
+
+    try fileManager.setAttributes(
+      [.protectionKey: FileProtectionType.complete],
+      ofItemAtPath: fileURL.path
+    )
+    var protectedURL = fileURL
+    var resourceValues = URLResourceValues()
+    resourceValues.isExcludedFromBackup = true
+    try protectedURL.setResourceValues(resourceValues)
   }
 
   private func decodeOaepSha256Mgf1Sha1(_ encodedMessage: Data) throws -> Data {

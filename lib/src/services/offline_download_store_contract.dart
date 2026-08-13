@@ -26,6 +26,11 @@ abstract interface class OfflineDownloadStore {
 
   Future<void> commitPackage(StagedOfflinePackage package);
 
+  Future<String> packagePath({
+    required String accountScope,
+    required String chapterId,
+  });
+
   Future<void> discardStagedPackage(StagedOfflinePackage package);
 
   Future<int> packageLength({
