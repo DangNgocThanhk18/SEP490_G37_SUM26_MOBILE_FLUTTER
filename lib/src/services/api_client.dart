@@ -370,6 +370,7 @@ class ApiClient {
     }
     final user = UserProfile.fromJson(data);
     _currentUser = user;
+    await _sessionStorage.write(_profileKey, jsonEncode(user.toJson()));
     return user;
   }
 
@@ -887,8 +888,47 @@ class ApiClient {
         return PremiumPlanSettings.fromJson(data);
       });
 
-  Future<void> upgradePlan(String planType) async {
-    await _request('POST', '/plans/upgrade', body: {'planType': planType});
+  Future<List<SubscriptionPlan>> getSubscriptionPlans() async {
+    final json = await _request(
+      'GET',
+      '/subscriptions/plans',
+      authorized: false,
+    );
+    final data = _unwrapData(json);
+    if (data is! List) {
+      throw const ApiException('Cannot read subscription plans.');
+    }
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(SubscriptionPlan.fromJson)
+        .where((plan) => plan.id.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<CheckoutSession> createCheckoutSession(String planId) async {
+    final json = await _request(
+      'POST',
+      '/subscriptions/checkout',
+      body: {'planId': planId},
+    );
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot create Stripe Checkout session.');
+    }
+    final session = CheckoutSession.fromJson(data);
+    if (session.sessionId.isEmpty || session.checkoutUrl.isEmpty) {
+      throw const ApiException('Stripe Checkout session is incomplete.');
+    }
+    return session;
+  }
+
+  Future<CheckoutStatus> getCheckoutStatus(String sessionId) async {
+    final json = await _request('GET', '/subscriptions/checkout/$sessionId');
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read Stripe Checkout status.');
+    }
+    return CheckoutStatus.fromJson(data);
   }
 
   Future<Comic> getComicDetail(String id) async {

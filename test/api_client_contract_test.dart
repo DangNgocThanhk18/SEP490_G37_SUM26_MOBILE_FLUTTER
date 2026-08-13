@@ -340,6 +340,74 @@ void main() {
     expect(status.ready, isTrue);
     expect(status.registeredDeviceCount, 2);
   });
+
+  test('creates and checks a verified Stripe Checkout session', () async {
+    final requests = <http.Request>[];
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8081/api',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        if (request.url.path == '/api/subscriptions/plans') {
+          return http.Response(
+            jsonEncode({
+              'success': true,
+              'data': [
+                {
+                  'id': '019f804b-18fb-7d98-8fe1-94c6c72a064a',
+                  'code': 'MONTHLY',
+                  'name': 'Premium Monthly',
+                  'price': 79000,
+                  'currency': 'VND',
+                  'billingInterval': 'MONTH',
+                  'features': ['No ads'],
+                },
+              ],
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/subscriptions/checkout') {
+          return http.Response(
+            jsonEncode({
+              'success': true,
+              'data': {
+                'sessionId': 'cs_test_123',
+                'checkoutUrl': 'https://checkout.stripe.com/c/pay/cs_test_123',
+              },
+            }),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'success': true,
+            'data': {
+              'sessionId': 'cs_test_123',
+              'paymentStatus': 'PAID',
+              'premiumActive': true,
+            },
+          }),
+          200,
+        );
+      }),
+    );
+
+    final plans = await client.getSubscriptionPlans();
+    final checkout = await client.createCheckoutSession(plans.single.id);
+    final status = await client.getCheckoutStatus(checkout.sessionId);
+
+    expect(plans.single.code, 'MONTHLY');
+    expect(checkout.checkoutUrl, contains('checkout.stripe.com'));
+    expect(status.completed, isTrue);
+    expect(requests.map((request) => request.url.path), [
+      '/api/subscriptions/plans',
+      '/api/subscriptions/checkout',
+      '/api/subscriptions/checkout/cs_test_123',
+    ]);
+    expect(jsonDecode(requests[1].body), {
+      'planId': '019f804b-18fb-7d98-8fe1-94c6c72a064a',
+    });
+  });
 }
 
 class _MemorySessionStorage implements SessionStorage {

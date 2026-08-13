@@ -246,7 +246,13 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
       case NotificationDestinationType.premium:
         final user = widget.user;
         if (user == null) return;
-        await _push(PremiumScreen(apiClient: widget.apiClient, user: user));
+        await _push(
+          PremiumScreen(
+            apiClient: widget.apiClient,
+            user: user,
+            onUserChanged: widget.onUserChanged,
+          ),
+        );
         return;
       case NotificationDestinationType.comic:
         await _openComic(destination.comicId!);

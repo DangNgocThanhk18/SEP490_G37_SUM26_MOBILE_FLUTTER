@@ -3,6 +3,8 @@ package com.example.comiverse_mobile
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
@@ -32,6 +34,7 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val SCREEN_CAPTURE_CHANNEL = "comiverse/screen_capture_protection"
         private const val OFFLINE_SECURITY_CHANNEL = "comiverse/offline_security"
+        private const val EXTERNAL_CHECKOUT_CHANNEL = "comiverse/external_checkout"
         private const val NOTIFICATION_CHANNEL = "comiverse_activity"
         private const val OFFLINE_KEY_PREFIX = "comiverse_offline_rsa_v1_"
         private val transientContentKeys = ConcurrentHashMap<String, ByteArray>()
@@ -72,6 +75,28 @@ class MainActivity : FlutterActivity() {
                     window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
                 }
                 result.success(null)
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            EXTERNAL_CHECKOUT_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "open") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val rawUrl = call.argument<String>("url")
+            val uri = rawUrl?.let(Uri::parse)
+            if (uri == null || uri.scheme?.lowercase() != "https") {
+                result.success(false)
+                return@setMethodCallHandler
+            }
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, uri))
+                result.success(true)
+            } catch (_: Exception) {
+                result.success(false)
             }
         }
 

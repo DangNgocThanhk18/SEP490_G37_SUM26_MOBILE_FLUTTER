@@ -31,6 +31,39 @@ import UserNotifications
     ) {
       ApplicationBadgePlugin.register(with: registrar)
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(
+      forPlugin: "ExternalCheckoutPlugin"
+    ) {
+      ExternalCheckoutPlugin.register(with: registrar)
+    }
+  }
+}
+
+private final class ExternalCheckoutPlugin: NSObject, FlutterPlugin {
+  private static let channelName = "comiverse/external_checkout"
+
+  static func register(with registrar: FlutterPluginRegistrar) {
+    let channel = FlutterMethodChannel(
+      name: channelName,
+      binaryMessenger: registrar.messenger()
+    )
+    registrar.addMethodCallDelegate(ExternalCheckoutPlugin(), channel: channel)
+  }
+
+  func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard call.method == "open",
+          let arguments = call.arguments as? [String: Any],
+          let rawUrl = arguments["url"] as? String,
+          let url = URL(string: rawUrl),
+          url.scheme?.lowercased() == "https" else {
+      result(false)
+      return
+    }
+    DispatchQueue.main.async {
+      UIApplication.shared.open(url, options: [:]) { opened in
+        result(opened)
+      }
+    }
   }
 }
 

@@ -43,6 +43,9 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
   int _tab = 0;
   String? _selectedLanguage; // null = original (no bubble overlay)
 
+  bool get _canDownloadOffline =>
+      widget.apiClient.currentUser?.premiumActive == true;
+
   @override
   void initState() {
     super.initState();
@@ -361,10 +364,16 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                                 onTap: () => _share(comic),
                               ),
                               _ActionItem(
-                                icon: Icons.download_outlined,
+                                icon: _canDownloadOffline
+                                    ? Icons.download_outlined
+                                    : Icons.lock_outline_rounded,
                                 label: context.tr('Download'),
-                                onTap: () =>
-                                    _showDownloadPicker(comic, chapters),
+                                disabledTooltip: context.tr(
+                                  'An active Premium plan is required for offline downloads.',
+                                ),
+                                onTap: _canDownloadOffline
+                                    ? () => _showDownloadPicker(comic, chapters)
+                                    : null,
                               ),
                             ],
                           ),
@@ -514,6 +523,13 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
     Comic comic,
     List<ChapterLite> chapters,
   ) async {
+    if (!_canDownloadOffline) {
+      _showMessage(
+        context.tr('An active Premium plan is required for offline downloads.'),
+        type: InAppNotificationType.information,
+      );
+      return;
+    }
     final service = widget.offlineDownloads;
     if (service == null || !await service.isSupported) {
       if (!mounted) return;
@@ -708,34 +724,49 @@ class _ActionItem extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.selected = false,
+    this.disabledTooltip,
   });
 
   final IconData icon;
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final bool selected;
+  final String? disabledTooltip;
 
   @override
   Widget build(BuildContext context) {
-    final color = selected
-        ? Theme.of(context).colorScheme.primary
-        : Theme.of(context).colorScheme.onSurfaceVariant;
-    return InkResponse(
-      onTap: onTap,
-      radius: 34,
-      child: SizedBox(
-        width: 82,
-        height: 80,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: color),
-            const SizedBox(height: 5),
-            Text(label, style: TextStyle(color: color, fontSize: 12)),
-          ],
+    final scheme = Theme.of(context).colorScheme;
+    final color = onTap == null
+        ? scheme.onSurface.withValues(alpha: 0.38)
+        : selected
+        ? scheme.primary
+        : scheme.onSurfaceVariant;
+    final action = Semantics(
+      button: true,
+      enabled: onTap != null,
+      label: onTap == null && disabledTooltip != null
+          ? '$label. $disabledTooltip'
+          : label,
+      child: InkResponse(
+        onTap: onTap,
+        radius: 34,
+        child: SizedBox(
+          width: 82,
+          height: 80,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: color),
+              const SizedBox(height: 5),
+              Text(label, style: TextStyle(color: color, fontSize: 12)),
+            ],
+          ),
         ),
       ),
     );
+    return disabledTooltip == null || onTap != null
+        ? action
+        : Tooltip(message: disabledTooltip!, child: action);
   }
 }
 

@@ -120,7 +120,11 @@ class ProfileScreen extends StatelessWidget {
                       onPressed: () => Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (_) =>
-                              PremiumScreen(apiClient: apiClient, user: user!),
+                              PremiumScreen(
+                                apiClient: apiClient,
+                                user: user!,
+                                onUserChanged: onUserChanged,
+                              ),
                         ),
                       ),
                     ),

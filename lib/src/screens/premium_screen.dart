@@ -4,24 +4,55 @@ import '../l10n/app_localizations.dart';
 import '../models/premium_plan.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
+import '../services/external_checkout_launcher.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/in_app_notification.dart';
 
 class PremiumScreen extends StatefulWidget {
-  const PremiumScreen({super.key, required this.apiClient, required this.user});
+  const PremiumScreen({
+    super.key,
+    required this.apiClient,
+    required this.user,
+    this.onUserChanged,
+  });
 
   final ApiClient apiClient;
   final UserProfile user;
+  final ValueChanged<UserProfile>? onUserChanged;
 
   @override
   State<PremiumScreen> createState() => _PremiumScreenState();
 }
 
-class _PremiumScreenState extends State<PremiumScreen> {
+class _PremiumScreenState extends State<PremiumScreen>
+    with WidgetsBindingObserver {
   late Future<PremiumPlanSettings> _future = widget.apiClient.getPremiumPlans();
+  late UserProfile _currentUser;
   String _selected = 'YEARLY';
   bool _upgrading = false;
+  bool _checkingCheckout = false;
+  String? _checkoutSessionId;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentUser = widget.user;
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkCheckoutAfterReturn();
+    }
+  }
 
   void _reload() =>
       setState(() => _future = widget.apiClient.getPremiumPlans());
@@ -42,17 +73,25 @@ class _PremiumScreenState extends State<PremiumScreen> {
       barrierDismissible: false,
     );
     if (!confirmed) return;
+
     setState(() => _upgrading = true);
     try {
-      await widget.apiClient.upgradePlan(_selected);
-      if (mounted) {
-        InAppNotifications.success(
-          context,
-          title: context.tr('Welcome to Premium'),
-          message: context.tr('Your Premium plan is now active.'),
-          duration: const Duration(seconds: 6),
+      final plans = await widget.apiClient.getSubscriptionPlans();
+      final plan = plans.cast<SubscriptionPlan?>().firstWhere(
+        (candidate) => candidate?.code.toUpperCase() == _selected,
+        orElse: () => null,
+      );
+      if (plan == null) {
+        throw const ApiException(
+          'The selected subscription plan is unavailable.',
         );
       }
+      final checkout = await widget.apiClient.createCheckoutSession(plan.id);
+      final opened = await ExternalCheckoutLauncher.open(checkout.checkoutUrl);
+      if (!opened) {
+        throw const ApiException('Could not open Stripe Checkout.');
+      }
+      if (mounted) setState(() => _checkoutSessionId = checkout.sessionId);
     } catch (error) {
       if (mounted) {
         InAppNotifications.error(
@@ -64,6 +103,34 @@ class _PremiumScreenState extends State<PremiumScreen> {
       }
     } finally {
       if (mounted) setState(() => _upgrading = false);
+    }
+  }
+
+  Future<void> _checkCheckoutAfterReturn() async {
+    final sessionId = _checkoutSessionId;
+    if (sessionId == null || _checkingCheckout || !mounted) return;
+    _checkingCheckout = true;
+    try {
+      final status = await widget.apiClient.getCheckoutStatus(sessionId);
+      if (!status.completed) return;
+      final user = await widget.apiClient.getMe();
+      if (!mounted) return;
+      setState(() {
+        _currentUser = user;
+        _checkoutSessionId = null;
+      });
+      widget.onUserChanged?.call(user);
+      InAppNotifications.success(
+        context,
+        title: context.tr('Welcome to Premium'),
+        message: context.tr('Your Premium plan is now active.'),
+        duration: const Duration(seconds: 6),
+      );
+    } catch (_) {
+      // The verified Stripe webhook may take a moment; retry on the next
+      // return to the application instead of claiming a payment succeeded.
+    } finally {
+      _checkingCheckout = false;
     }
   }
 
@@ -185,7 +252,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
                           width: double.infinity,
                           child: PrimaryGradientButton(
                             label: context.tr(
-                              widget.user.premiumActive
+                              _currentUser.premiumActive
                                   ? 'Switch Premium Plan'
                                   : 'Start Premium',
                             ),
@@ -193,6 +260,16 @@ class _PremiumScreenState extends State<PremiumScreen> {
                             onPressed: _upgrade,
                           ),
                         ),
+                        if (_checkoutSessionId != null) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            context.tr(
+                              'Complete payment in Stripe, then return to ComiVerse to activate Premium.',
+                            ),
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
                         const SizedBox(height: 12),
                         Text(
                           context.tr(
@@ -220,7 +297,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
       if (i > 0 && (whole.length - i) % 3 == 0) buffer.write('.');
       buffer.write(whole[i]);
     }
-    return '${buffer.toString()}₫';
+    return '${buffer.toString()} VND';
   }
 }
 
