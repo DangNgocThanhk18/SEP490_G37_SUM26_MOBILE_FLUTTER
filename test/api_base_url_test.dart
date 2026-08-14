@@ -22,7 +22,7 @@ void main() {
 
       expect(ApiClient.resolveBaseUrl(), ApiClient.deployedBaseUrl);
       expect(uri.scheme, 'https');
-      expect(uri.host, 'sep490g37sum26java-production.up.railway.app');
+      expect(uri.host, 'sep490g37sum26java-production-0ff1.up.railway.app');
       expect(uri.path, '/api');
     });
   });

@@ -7,7 +7,7 @@ Android-first Flutter reader application for ComiVerse.
 The app uses the deployed Railway backend by default:
 
 ```text
-https://sep490g37sum26java-production.up.railway.app/api
+https://sep490g37sum26java-production-0ff1.up.railway.app/api
 ```
 
 Therefore, this is enough for Android devices and emulators as long as they
@@ -20,6 +20,10 @@ flutter run
 Spring Boot does not need to be running locally. `API_BASE_URL` remains
 available as a build-time override for local development or another deployed
 environment. Do not commit a developer machine's LAN IP to the source code.
+
+`API_BASE_URL` is compiled into the application. After a Railway domain
+changes, rebuild and reinstall the APK/IPA; an already installed build keeps
+the previous backend URL.
 
 ### Android Emulator
 

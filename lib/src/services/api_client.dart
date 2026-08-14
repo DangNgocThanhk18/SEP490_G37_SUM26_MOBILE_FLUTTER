@@ -51,7 +51,7 @@ class OfflinePackageResponse {
 
 class ApiClient {
   static const deployedBaseUrl =
-      'https://sep490g37sum26java-production.up.railway.app/api';
+      'https://sep490g37sum26java-production-0ff1.up.railway.app/api';
   static const _catalogCacheDuration = Duration(minutes: 5);
   static const _homeCacheDuration = Duration(minutes: 2);
   static const _accountCacheDuration = Duration(seconds: 45);
