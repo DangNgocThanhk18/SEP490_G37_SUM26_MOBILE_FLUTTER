@@ -275,6 +275,7 @@ class _FakeApiClient extends ApiClient {
       chapterCount: 120,
       viewCount: 1250000,
       ratingAverage: 4.8,
+      ratingCount: 128,
       genres: const ['Action', 'Fantasy'],
     ),
   );
@@ -375,6 +376,14 @@ class _FakeApiClient extends ApiClient {
 
   @override
   Future<bool> checkLiked(String comicId) async => false;
+
+  @override
+  Future<ComicRating> getComicRating(String comicId) async => ComicRating(
+    comicId: comicId,
+    ratingAverage: 4.8,
+    ratingCount: 128,
+    userScore: 5,
+  );
 
   @override
   Future<PremiumPlanSettings> getPremiumPlans() async =>

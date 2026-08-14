@@ -10,6 +10,7 @@ class Comic {
     this.latestChapterNumber,
     this.viewCount,
     this.ratingAverage,
+    this.ratingCount,
     this.likeCount,
     this.saveCount,
     this.chapterCount,
@@ -27,6 +28,7 @@ class Comic {
   final String? latestChapterNumber;
   final int? viewCount;
   final double? ratingAverage;
+  final int? ratingCount;
   final int? likeCount;
   final int? saveCount;
   final int? chapterCount;
@@ -50,6 +52,7 @@ class Comic {
       latestChapterNumber: json['latestChapterNumber']?.toString(),
       viewCount: _asInt(json['viewCount']),
       ratingAverage: _asDouble(json['ratingAverage']),
+      ratingCount: _asInt(json['ratingCount']),
       likeCount: _asInt(json['likeCount']),
       saveCount: _asInt(json['saveCount']),
       chapterCount: _asInt(json['chapterCount']),
@@ -83,6 +86,39 @@ class Comic {
         })
         .where((name) => name.trim().isNotEmpty)
         .toList();
+  }
+}
+
+class ComicRating {
+  const ComicRating({
+    required this.comicId,
+    required this.ratingAverage,
+    required this.ratingCount,
+    this.userScore,
+  });
+
+  final String comicId;
+  final double ratingAverage;
+  final int ratingCount;
+  final int? userScore;
+
+  factory ComicRating.fromJson(
+    Map<String, dynamic> json, {
+    String fallbackComicId = '',
+  }) {
+    final rawAverage = Comic._asDouble(json['ratingAverage']) ?? 0;
+    final rawCount = Comic._asInt(json['ratingCount']) ?? 0;
+    final rawUserScore = Comic._asInt(json['userScore']);
+    return ComicRating(
+      comicId: (json['comicId'] ?? fallbackComicId).toString(),
+      ratingAverage: rawAverage.isFinite
+          ? rawAverage.clamp(0, 5).toDouble()
+          : 0,
+      ratingCount: rawCount < 0 ? 0 : rawCount,
+      userScore: rawUserScore != null && rawUserScore >= 1 && rawUserScore <= 5
+          ? rawUserScore
+          : null,
+    );
   }
 }
 

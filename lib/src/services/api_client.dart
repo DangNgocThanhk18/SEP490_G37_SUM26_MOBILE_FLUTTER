@@ -940,6 +940,37 @@ class ApiClient {
     return Comic.fromJson(data);
   }
 
+  Future<ComicRating> getComicRating(String comicId) async {
+    final json = await _request('GET', '/ratings/comics/$comicId');
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read comic rating.');
+    }
+    return ComicRating.fromJson(data, fallbackComicId: comicId);
+  }
+
+  Future<ComicRating> rateComic(String comicId, int score) async {
+    final json = await _request(
+      'POST',
+      '/ratings/comics/$comicId',
+      body: {'score': score},
+    );
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read updated comic rating.');
+    }
+    return ComicRating.fromJson(data, fallbackComicId: comicId);
+  }
+
+  Future<ComicRating> deleteComicRating(String comicId) async {
+    final json = await _request('DELETE', '/ratings/comics/$comicId');
+    final data = _unwrapData(json);
+    if (data is! Map<String, dynamic>) {
+      throw const ApiException('Cannot read updated comic rating.');
+    }
+    return ComicRating.fromJson(data, fallbackComicId: comicId);
+  }
+
   Future<List<ChapterLite>> getChapters(String comicId) async {
     final json = await _request(
       'GET',

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../l10n/app_localizations.dart';
@@ -104,6 +106,22 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  List<Comic> _featuredComics(_HomeData data) {
+    final unique = <String, Comic>{};
+    for (final section in [
+      data.trending,
+      data.recommended,
+      data.updated,
+      data.history,
+    ]) {
+      for (final comic in section) {
+        unique.putIfAbsent(comic.id, () => comic);
+        if (unique.length == 5) return unique.values.toList(growable: false);
+      }
+    }
+    return unique.values.toList(growable: false);
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -168,12 +186,8 @@ class _HomeScreenState extends State<HomeScreen>
               );
             }
             final data = snapshot.data!;
-            final featured =
-                data.trending.firstOrNull ??
-                data.recommended.firstOrNull ??
-                data.updated.firstOrNull ??
-                data.history.firstOrNull;
-            if (featured == null) {
+            final featured = _featuredComics(data);
+            if (featured.isEmpty) {
               return ListView(
                 children: [
                   SizedBox(
@@ -192,9 +206,9 @@ class _HomeScreenState extends State<HomeScreen>
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                  child: _FeaturedComic(
-                    comic: featured,
-                    onTap: () => _openComic(featured),
+                  child: _FeaturedCarousel(
+                    comics: featured,
+                    onComicTap: _openComic,
                   ),
                 ),
                 if (data.hasPartialFailure)
@@ -370,6 +384,267 @@ class _HomeScreenState extends State<HomeScreen>
           },
         ),
       ),
+    );
+  }
+}
+
+class _FeaturedCarousel extends StatefulWidget {
+  const _FeaturedCarousel({required this.comics, required this.onComicTap});
+
+  final List<Comic> comics;
+  final ValueChanged<Comic> onComicTap;
+
+  @override
+  State<_FeaturedCarousel> createState() => _FeaturedCarouselState();
+}
+
+class _FeaturedCarouselState extends State<_FeaturedCarousel>
+    with WidgetsBindingObserver {
+  static const _autoPlayInterval = Duration(seconds: 5);
+  static const _slideDuration = Duration(milliseconds: 450);
+  static const _loopMultiplier = 1000;
+
+  late final PageController _controller;
+  late int _virtualPage;
+  Timer? _autoPlayTimer;
+  bool _isDragging = false;
+  bool _tickerEnabled = true;
+  bool _appIsActive = true;
+
+  int get _logicalPage =>
+      widget.comics.isEmpty ? 0 : _virtualPage.remainder(widget.comics.length);
+
+  bool get _canAutoPlay =>
+      mounted &&
+      widget.comics.length > 1 &&
+      _tickerEnabled &&
+      _appIsActive &&
+      !_isDragging;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _virtualPage = widget.comics.length * _loopMultiplier;
+    _controller = PageController(initialPage: _virtualPage);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final enabled = TickerMode.valuesOf(context).enabled;
+    if (_tickerEnabled == enabled && _autoPlayTimer != null) return;
+    _tickerEnabled = enabled;
+    enabled ? _scheduleAutoPlay() : _cancelAutoPlay();
+  }
+
+  @override
+  void didUpdateWidget(covariant _FeaturedCarousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final sameComicOrder =
+        oldWidget.comics.length == widget.comics.length &&
+        List.generate(
+          widget.comics.length,
+          (index) => oldWidget.comics[index].id == widget.comics[index].id,
+        ).every((matches) => matches);
+    if (sameComicOrder) {
+      _scheduleAutoPlay();
+      return;
+    }
+    final oldLogicalPage = oldWidget.comics.isEmpty
+        ? 0
+        : _virtualPage.remainder(oldWidget.comics.length);
+    final selectedId = oldWidget.comics.isEmpty
+        ? null
+        : oldWidget.comics[oldLogicalPage].id;
+    var newLogicalPage = selectedId == null
+        ? 0
+        : widget.comics.indexWhere((comic) => comic.id == selectedId);
+    if (newLogicalPage < 0) newLogicalPage = 0;
+    _virtualPage = widget.comics.length * _loopMultiplier + newLogicalPage;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_controller.hasClients) return;
+      _controller.jumpToPage(_virtualPage);
+    });
+    _scheduleAutoPlay();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appIsActive = state == AppLifecycleState.resumed;
+    _appIsActive ? _scheduleAutoPlay() : _cancelAutoPlay();
+  }
+
+  void _scheduleAutoPlay() {
+    _autoPlayTimer?.cancel();
+    if (!_canAutoPlay) return;
+    _autoPlayTimer = Timer(_autoPlayInterval, _showNextPage);
+  }
+
+  void _cancelAutoPlay() {
+    _autoPlayTimer?.cancel();
+    _autoPlayTimer = null;
+  }
+
+  void _showNextPage() {
+    if (!_canAutoPlay || !_controller.hasClients) {
+      _scheduleAutoPlay();
+      return;
+    }
+    _controller.animateToPage(
+      _virtualPage + 1,
+      duration: _slideDuration,
+      curve: Curves.easeInOutCubic,
+    );
+  }
+
+  void _selectPage(int logicalPage) {
+    if (!_controller.hasClients || widget.comics.length < 2) return;
+    final currentLogicalPage = _logicalPage;
+    var delta = logicalPage - currentLogicalPage;
+    final halfway = widget.comics.length / 2;
+    if (delta > halfway) delta -= widget.comics.length;
+    if (delta < -halfway) delta += widget.comics.length;
+    if (delta == 0) {
+      _scheduleAutoPlay();
+      return;
+    }
+    _cancelAutoPlay();
+    _controller.animateToPage(
+      _virtualPage + delta,
+      duration: _slideDuration,
+      curve: Curves.easeInOutCubic,
+    );
+  }
+
+  bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollStartNotification &&
+        notification.dragDetails != null) {
+      _isDragging = true;
+      _cancelAutoPlay();
+    } else if (notification is ScrollEndNotification && _isDragging) {
+      _isDragging = false;
+      _scheduleAutoPlay();
+    }
+    return false;
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _cancelAutoPlay();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final baseHeight = constraints.maxWidth >= 700
+            ? 300.0
+            : (constraints.maxWidth / 1.05).clamp(340.0, 420.0);
+        final scaledExtra = ((textScale - 1) * 100).clamp(0, 80).toDouble();
+        return SizedBox(
+          height: baseHeight + scaledExtra,
+          child: Stack(
+            children: [
+              NotificationListener<ScrollNotification>(
+                onNotification: _handleScrollNotification,
+                child: PageView.builder(
+                  key: const ValueKey('home-featured-page-view'),
+                  controller: _controller,
+                  physics: widget.comics.length > 1
+                      ? const PageScrollPhysics()
+                      : const NeverScrollableScrollPhysics(),
+                  onPageChanged: (page) {
+                    setState(() => _virtualPage = page);
+                    if (!_isDragging) _scheduleAutoPlay();
+                  },
+                  itemBuilder: (context, index) {
+                    final comic =
+                        widget.comics[index.remainder(widget.comics.length)];
+                    return _FeaturedComic(
+                      comic: comic,
+                      onTap: () => widget.onComicTap(comic),
+                    );
+                  },
+                ),
+              ),
+              if (widget.comics.length > 1)
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: Material(
+                    color: const Color(0x9907040D),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (
+                            var index = 0;
+                            index < widget.comics.length;
+                            index++
+                          )
+                            Tooltip(
+                              message: context.tr(
+                                'Show featured comic {number}: {title}',
+                                values: {
+                                  'number': index + 1,
+                                  'title': widget.comics[index].title,
+                                },
+                              ),
+                              child: Semantics(
+                                button: true,
+                                selected: index == _logicalPage,
+                                label: context.tr(
+                                  'Show featured comic {number}: {title}',
+                                  values: {
+                                    'number': index + 1,
+                                    'title': widget.comics[index].title,
+                                  },
+                                ),
+                                child: InkResponse(
+                                  key: ValueKey(
+                                    'home-featured-indicator-$index',
+                                  ),
+                                  onTap: () => _selectPage(index),
+                                  radius: 18,
+                                  child: SizedBox.square(
+                                    dimension: 32,
+                                    child: Center(
+                                      child: AnimatedContainer(
+                                        duration: const Duration(
+                                          milliseconds: 180,
+                                        ),
+                                        width: index == _logicalPage ? 20 : 7,
+                                        height: 7,
+                                        decoration: BoxDecoration(
+                                          color: index == _logicalPage
+                                              ? Colors.white
+                                              : Colors.white54,
+                                          borderRadius: BorderRadius.circular(
+                                            4,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

@@ -89,6 +89,10 @@ class _DownloadGateApiClient extends ApiClient {
   Future<bool> checkLiked(String comicId) async => false;
 
   @override
+  Future<ComicRating> getComicRating(String comicId) async =>
+      const ComicRating(comicId: 'comic-1', ratingAverage: 0, ratingCount: 0);
+
+  @override
   Future<List<String>> getComicTranslationLanguages(String comicId) async =>
       const [];
 }

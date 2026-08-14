@@ -35,10 +35,12 @@ class ComicDetailScreen extends StatefulWidget {
 }
 
 class _ComicDetailScreenState extends State<ComicDetailScreen> {
-  late Future<_ComicDetailData> _future = _load();
+  late Future<_ComicDetailData> _future;
+  ComicRating? _rating;
   bool _saved = false;
   bool _liked = false;
   bool _actionBusy = false;
+  bool _ratingBusy = false;
   bool _showFullSummary = false;
   int _tab = 0;
   String? _selectedLanguage; // null = original (no bubble overlay)
@@ -49,6 +51,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _future = _load();
     _restoreReadingLanguage();
   }
 
@@ -77,9 +80,19 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
         widget.apiClient.checkLiked(widget.comic.id)
       else
         Future.value(false),
+      _loadRating(),
     ]);
     _saved = results[3] as bool;
     _liked = results[4] as bool;
+    final comic = results[0] as Comic;
+    final rating =
+        (results[5] as ComicRating?) ??
+        ComicRating(
+          comicId: comic.id,
+          ratingAverage: comic.ratingAverage ?? 0,
+          ratingCount: comic.ratingCount ?? 0,
+        );
+    _rating = rating;
     List<String> languages = const [];
     try {
       languages = await widget.apiClient.getComicTranslationLanguages(
@@ -89,11 +102,28 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
       // Non-fatal — the reader just falls back to "Original" only.
     }
     return _ComicDetailData(
-      comic: results[0] as Comic,
+      comic: comic,
       chapters: results[1] as List<ChapterLite>,
       readChapterIds: results[2] as Set<String>,
       languages: languages,
+      rating: rating,
     );
+  }
+
+  Future<ComicRating?> _loadRating() async {
+    if (!widget.apiClient.hasToken) return null;
+    try {
+      return await widget.apiClient.getComicRating(widget.comic.id);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _reload() {
+    setState(() {
+      _rating = null;
+      _future = _load();
+    });
   }
 
   void _onLanguageChanged(String? lang) {
@@ -129,6 +159,68 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
       _showMessage(context.localizedError(error));
     } finally {
       if (mounted) setState(() => _actionBusy = false);
+    }
+  }
+
+  Future<void> _rateComic(int score) async {
+    if (!widget.apiClient.hasToken) {
+      _showMessage(
+        context.tr('Sign in to rate this comic.'),
+        type: InAppNotificationType.information,
+      );
+      return;
+    }
+    if (_ratingBusy) return;
+    setState(() => _ratingBusy = true);
+    try {
+      final updated = await widget.apiClient.rateComic(widget.comic.id, score);
+      if (!mounted) return;
+      setState(() => _rating = updated);
+      _showMessage(
+        context.tr(
+          'Rated {score} stars successfully.',
+          values: {'score': score},
+        ),
+        type: InAppNotificationType.success,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(context.localizedError(error));
+    } finally {
+      if (mounted) setState(() => _ratingBusy = false);
+    }
+  }
+
+  Future<void> _removeRating() async {
+    if (!widget.apiClient.hasToken || _rating?.userScore == null) return;
+    final confirmed = await InAppModal.confirm(
+      context,
+      title: context.tr('Remove your rating?'),
+      message: context.tr(
+        'Are you sure you want to remove your rating for this comic?',
+      ),
+      confirmLabel: context.tr('Remove rating'),
+      cancelLabel: context.tr('Keep rating'),
+      icon: Icons.star_border_rounded,
+      destructive: true,
+      barrierDismissible: false,
+    );
+    if (!confirmed || !mounted || _ratingBusy) return;
+
+    setState(() => _ratingBusy = true);
+    try {
+      final updated = await widget.apiClient.deleteComicRating(widget.comic.id);
+      if (!mounted) return;
+      setState(() => _rating = updated);
+      _showMessage(
+        context.tr('Your rating has been removed.'),
+        type: InAppNotificationType.success,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(context.localizedError(error));
+    } finally {
+      if (mounted) setState(() => _ratingBusy = false);
     }
   }
 
@@ -186,7 +278,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
         )
         .then((_) {
           if (widget.apiClient.hasToken && mounted) {
-            setState(() => _future = _load());
+            _reload();
           }
           // Sync lại ngôn ngữ nếu user đổi trong reader
           _restoreReadingLanguage();
@@ -203,6 +295,14 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
           final data = snapshot.data;
           final comic = data?.comic ?? widget.comic;
           final chapters = data?.chapters ?? const <ChapterLite>[];
+          final rating =
+              _rating ??
+              data?.rating ??
+              ComicRating(
+                comicId: comic.id,
+                ratingAverage: comic.ratingAverage ?? 0,
+                ratingCount: comic.ratingCount ?? 0,
+              );
           return CustomScrollView(
             slivers: [
               SliverAppBar(
@@ -239,41 +339,9 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  comic.title,
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.displaySmall,
-                                ),
-                              ),
-                              if (comic.ratingAverage != null)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 7,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: context.cvColors.surfaceSubtle,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.star_rounded,
-                                        color: context.cvColors.rating,
-                                        size: 18,
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        comic.ratingAverage!.toStringAsFixed(1),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                            ],
+                          Text(
+                            comic.title,
+                            style: Theme.of(context).textTheme.displaySmall,
                           ),
                           const SizedBox(height: 8),
                           Wrap(
@@ -379,6 +447,20 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                           ),
                           const Divider(),
                           const SizedBox(height: 14),
+                          _ComicRatingSection(
+                            rating: rating,
+                            busy:
+                                _ratingBusy ||
+                                snapshot.connectionState ==
+                                    ConnectionState.waiting,
+                            onRate: _rateComic,
+                            onRemove: rating.userScore == null
+                                ? null
+                                : _removeRating,
+                          ),
+                          const SizedBox(height: 18),
+                          const Divider(),
+                          const SizedBox(height: 14),
                           Text(
                             comic.summary?.trim().isNotEmpty == true
                                 ? comic.summary!
@@ -455,7 +537,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                   hasScrollBody: false,
                   child: ApiErrorState(
                     error: snapshot.error!,
-                    onRetry: () => setState(() => _future = _load()),
+                    onRetry: _reload,
                   ),
                 )
               else if (_tab == 1)
@@ -718,6 +800,175 @@ class _DetailHero extends StatelessWidget {
   }
 }
 
+class _ComicRatingSection extends StatelessWidget {
+  const _ComicRatingSection({
+    required this.rating,
+    required this.busy,
+    required this.onRate,
+    required this.onRemove,
+  });
+
+  final ComicRating rating;
+  final bool busy;
+  final ValueChanged<int> onRate;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final tokens = context.cvColors;
+    final selectedScore = rating.userScore ?? 0;
+    final ratingLabel = rating.ratingCount == 1
+        ? '/ 5 ({count} rating)'
+        : '/ 5 ({count} ratings)';
+
+    return Semantics(
+      container: true,
+      label: context.tr('Comic rating'),
+      child: Container(
+        key: const ValueKey('comic-rating-section'),
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: tokens.surfaceSubtle,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: tokens.borderSubtle),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.star_rounded, color: tokens.rating, size: 25),
+                    const SizedBox(width: 5),
+                    Text(
+                      rating.ratingAverage.toStringAsFixed(1),
+                      key: const ValueKey('comic-rating-average'),
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+                Text(
+                  context.tr(
+                    ratingLabel,
+                    values: {'count': rating.ratingCount},
+                  ),
+                  key: const ValueKey('comic-rating-count'),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                if (rating.userScore != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: tokens.rating.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      context.tr(
+                        'Your rating: {score}/5',
+                        values: {'score': rating.userScore},
+                      ),
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: tokens.warning,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 2,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                for (var score = 1; score <= 5; score++)
+                  Tooltip(
+                    message: context.tr(
+                      score == 1 ? 'Rate {score} star' : 'Rate {score} stars',
+                      values: {'score': score},
+                    ),
+                    child: Semantics(
+                      button: true,
+                      selected: score <= selectedScore,
+                      label: context.tr(
+                        score == 1 ? 'Rate {score} star' : 'Rate {score} stars',
+                        values: {'score': score},
+                      ),
+                      child: IconButton(
+                        key: ValueKey('comic-rating-star-$score'),
+                        onPressed: busy ? null : () => onRate(score),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 44,
+                          height: 44,
+                        ),
+                        padding: EdgeInsets.zero,
+                        iconSize: 34,
+                        visualDensity: VisualDensity.compact,
+                        icon: Icon(
+                          score <= selectedScore
+                              ? Icons.star_rounded
+                              : Icons.star_border_rounded,
+                          color: score <= selectedScore
+                              ? tokens.rating
+                              : scheme.onSurfaceVariant.withValues(alpha: 0.6),
+                        ),
+                      ),
+                    ),
+                  ),
+                const SizedBox(width: 6),
+                SizedBox.square(
+                  dimension: 18,
+                  child: busy
+                      ? const CircularProgressIndicator(strokeWidth: 2)
+                      : null,
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              context.tr(
+                selectedScore > 0
+                    ? '(Selected {score} stars)'
+                    : '(Tap a star to rate)',
+                values: {'score': selectedScore},
+              ),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+            if (onRemove != null) ...[
+              const SizedBox(height: 4),
+              TextButton.icon(
+                key: const ValueKey('remove-comic-rating'),
+                onPressed: busy ? null : onRemove,
+                style: TextButton.styleFrom(foregroundColor: scheme.error),
+                icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                label: Text(context.tr('Remove my rating')),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ActionItem extends StatelessWidget {
   const _ActionItem({
     required this.icon,
@@ -875,12 +1126,14 @@ class _ComicDetailData {
     required this.chapters,
     required this.readChapterIds,
     required this.languages,
+    required this.rating,
   });
 
   final Comic comic;
   final List<ChapterLite> chapters;
   final Set<String> readChapterIds;
   final List<String> languages;
+  final ComicRating rating;
 }
 
 /// Translation chip row hiển thị bên trên danh sách chapter.

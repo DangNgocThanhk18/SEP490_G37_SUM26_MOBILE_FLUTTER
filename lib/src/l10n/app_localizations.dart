@@ -75,6 +75,30 @@ class _AppLocalizationsDelegate
 }
 
 const Map<String, String> _vietnamese = {
+  'Show featured comic {number}: {title}':
+      'Xem truy\u1ec7n n\u1ed5i b\u1eadt {number}: {title}',
+  'Comic rating': '\u0110\u00e1nh gi\u00e1 truy\u1ec7n',
+  '/ 5 ({count} rating)': '/ 5 ({count} \u0111\u00e1nh gi\u00e1)',
+  '/ 5 ({count} ratings)': '/ 5 ({count} \u0111\u00e1nh gi\u00e1)',
+  'Your rating: {score}/5':
+      '\u0110\u00e1nh gi\u00e1 c\u1ee7a b\u1ea1n: {score}/5',
+  'Rate {score} star': 'Ch\u1ea5m {score} sao',
+  'Rate {score} stars': 'Ch\u1ea5m {score} sao',
+  '(Selected {score} stars)': '(\u0110\u00e3 ch\u1ecdn {score} sao)',
+  '(Tap a star to rate)':
+      '(Ch\u1ea1m v\u00e0o sao \u0111\u1ec3 \u0111\u00e1nh gi\u00e1)',
+  'Sign in to rate this comic.':
+      '\u0110\u0103ng nh\u1eadp \u0111\u1ec3 \u0111\u00e1nh gi\u00e1 truy\u1ec7n n\u00e0y.',
+  'Rated {score} stars successfully.':
+      '\u0110\u00e3 \u0111\u00e1nh gi\u00e1 {score} sao th\u00e0nh c\u00f4ng.',
+  'Remove your rating?': 'X\u00f3a \u0111\u00e1nh gi\u00e1 c\u1ee7a b\u1ea1n?',
+  'Are you sure you want to remove your rating for this comic?':
+      'B\u1ea1n c\u00f3 ch\u1eafc mu\u1ed1n x\u00f3a \u0111\u00e1nh gi\u00e1 c\u1ee7a m\u00ecnh cho truy\u1ec7n n\u00e0y kh\u00f4ng?',
+  'Remove rating': 'X\u00f3a \u0111\u00e1nh gi\u00e1',
+  'Keep rating': 'Gi\u1eef \u0111\u00e1nh gi\u00e1',
+  'Your rating has been removed.':
+      '\u0110\u00e1nh gi\u00e1 c\u1ee7a b\u1ea1n \u0111\u00e3 \u0111\u01b0\u1ee3c x\u00f3a.',
+  'Remove my rating': 'X\u00f3a \u0111\u00e1nh gi\u00e1 c\u1ee7a t\u00f4i',
   '/ month': '/ tháng',
   '/ year': '/ năm',
   'Account': 'Tài khoản',
