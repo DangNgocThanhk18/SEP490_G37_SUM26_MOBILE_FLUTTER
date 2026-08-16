@@ -1,16 +1,20 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:comiverse_mobile/src/models/offline_download.dart';
+import 'package:comiverse_mobile/src/models/chapter.dart';
 import 'package:comiverse_mobile/src/models/user_profile.dart';
 import 'package:comiverse_mobile/src/services/api_client.dart';
 import 'package:comiverse_mobile/src/services/offline_download_service.dart';
 import 'package:comiverse_mobile/src/services/offline_decrypted_cache_contract.dart';
 import 'package:comiverse_mobile/src/services/offline_decrypted_cache_io.dart';
+import 'package:comiverse_mobile/src/services/offline_download_store_contract.dart';
 import 'package:comiverse_mobile/src/services/offline_platform_security.dart';
 import 'package:comiverse_mobile/src/services/session_storage.dart';
 
@@ -229,6 +233,186 @@ void main() {
         throwsA(isA<OfflineDownloadException>()),
       );
     });
+
+    test('parses encrypted translation ranges in version two packages', () {
+      final translated = {
+        ..._manifestJson([_pageJson(page: 1, offset: 0)]),
+        'version': 2,
+        'translationCount': 1,
+        'translationAadFormat':
+            'CVPK2|packageId|userId|chapterId|deviceKeySha256|contentRevision|translation|languageCode|translationSha256',
+        'translations': [_translationJson(language: 'vi', offset: 24)],
+      };
+      final manifestBytes = utf8.encode(jsonEncode(translated));
+      final parsed = CvPackManifest.parse(
+        header: _header(manifestBytes.length),
+        manifestBytes: manifestBytes,
+        packageLength: 9 + manifestBytes.length + 56,
+      );
+
+      expect(parsed.version, 2);
+      expect(parsed.translationLanguages, ['vi']);
+      expect(parsed.translation('vi').contentType, 'application/json');
+
+      final overlapping = {
+        ...translated,
+        'translations': [_translationJson(language: 'vi', offset: 8)],
+      };
+      final overlapBytes = utf8.encode(jsonEncode(overlapping));
+      expect(
+        () => CvPackManifest.parse(
+          header: _header(overlapBytes.length),
+          manifestBytes: overlapBytes,
+          packageLength: 9 + overlapBytes.length + 56,
+        ),
+        throwsA(isA<OfflineDownloadException>()),
+      );
+    });
+  });
+
+  test('decrypts and parses an authenticated offline translation', () async {
+    final serverTime = DateTime.utc(2026, 8, 16, 12);
+    final offlineUntil = serverTime.add(const Duration(days: 7));
+    const deviceId = 'stable-installation-id-00000001';
+    final deviceIdHash = sha256.convert(utf8.encode(deviceId)).toString();
+    final wrappedKey = _b64(List<int>.filled(384, 1));
+    final pageCiphertext = Uint8List.fromList(List<int>.filled(24, 7));
+    final pagesBubbles = jsonEncode([
+      {
+        'pageNumber': 1,
+        'imageUrl': '',
+        'bubbles': jsonEncode({
+          'selections': [
+            {
+              'id': 'bubble-1',
+              'shape': 'rect',
+              'x': 10,
+              'y': 10,
+              'width': 30,
+              'height': 15,
+              'translation': 'Xin chao',
+            },
+          ],
+        }),
+      },
+    ]);
+    final translationPlaintext = Uint8List.fromList(
+      utf8.encode(
+        jsonEncode({
+          'id': 'translation-1',
+          'languageCode': 'vi',
+          'pagesBubbles': pagesBubbles,
+        }),
+      ),
+    );
+    final translationHash = sha256.convert(translationPlaintext).toString();
+    final manifestJson = {
+      ..._manifestJson([
+        {
+          ..._pageJson(page: 1, offset: 0),
+          'ciphertextSha256': sha256.convert(pageCiphertext).toString(),
+        },
+      ]),
+      'version': 2,
+      'deviceIdHash': deviceIdHash,
+      'translationCount': 1,
+      'translationAadFormat':
+          'CVPK2|packageId|userId|chapterId|deviceKeySha256|contentRevision|translation|languageCode|translationSha256',
+      'translations': [
+        {
+          ..._translationJson(language: 'vi', offset: pageCiphertext.length),
+          'length': translationPlaintext.length,
+          'plaintextLength': translationPlaintext.length,
+          'translationSha256': translationHash,
+          'ciphertextSha256': translationHash,
+        },
+      ],
+    };
+    final manifestBytes = Uint8List.fromList(
+      utf8.encode(jsonEncode(manifestJson)),
+    );
+    final packageBytes = Uint8List.fromList([
+      ..._header(manifestBytes.length),
+      ...manifestBytes,
+      ...pageCiphertext,
+      ...translationPlaintext,
+    ]);
+    final manifest = CvPackManifest.parse(
+      header: _header(manifestBytes.length),
+      manifestBytes: manifestBytes,
+      packageLength: packageBytes.length,
+    );
+    final packageHash = sha256.convert(packageBytes).toString();
+    final claims = OfflineLicenseClaims.fromJson({
+      ..._claimsJson(),
+      'formatVersion': 2,
+      'deviceIdHash': deviceIdHash,
+      'manifestSha256': sha256.convert(manifestBytes).toString(),
+      'packageSha256': packageHash,
+      'packageSize': packageBytes.length,
+      'wrappedKeySha256': sha256
+          .convert(base64Url.decode(base64Url.normalize(wrappedKey)))
+          .toString(),
+      'iat': serverTime.millisecondsSinceEpoch ~/ 1000,
+      'nbf':
+          serverTime
+              .subtract(const Duration(seconds: 30))
+              .millisecondsSinceEpoch ~/
+          1000,
+      'exp': offlineUntil.millisecondsSinceEpoch ~/ 1000,
+      'serverTime': serverTime.toIso8601String(),
+      'offlineUntil': offlineUntil.toIso8601String(),
+    }).withSigningKeyId('k1');
+    final storage = _MemoryStorage();
+    await storage.write('comiverse_offline_install_id_v1', deviceId);
+    final service = OfflineDownloadService(
+      apiClient: ApiClient(),
+      store: _MemoryPackageStore(packageBytes),
+      secureStorage: storage,
+      platformSecurity: _FakePlatformSecurity(
+        clock: const OfflinePlatformClock(
+          elapsedRealtimeMillis: 1000,
+          bootCount: 5,
+        ),
+      ),
+      decryptedPageCache: _MemoryDecryptedCache(),
+      licenseVerifier: _StaticVerifier({'license-v2': claims}),
+    );
+    await service.bindAccount(
+      const UserProfile(
+        userId: 'user-1',
+        username: 'reader',
+        email: 'reader@example.com',
+      ),
+    );
+    await service.writeEntryForTesting(
+      OfflineDownloadEntry(
+        chapterId: 'chapter-1',
+        comicId: 'comic-1',
+        chapterNumber: '1',
+        chapterTitle: 'Chapter 1',
+        comicTitle: 'Comic',
+        licenseToken: 'license-v2',
+        wrappedContentKey: wrappedKey,
+        keyAlgorithm: 'RSA-OAEP-SHA256-MGF1SHA1',
+        packageSha256: packageHash,
+        deviceKeyId: 'device-key-1',
+        deviceKeySha256: 'b' * 64,
+        downloadedAt: serverTime,
+        offlineUntil: offlineUntil,
+        sizeBytes: packageBytes.length,
+        manifest: manifest,
+      ),
+    );
+    await service.anchorTrustedTimeForTesting(serverTime);
+
+    final translations = await service.openTranslations('chapter-1');
+
+    expect(translations.single.languageCode, 'vi');
+    expect(
+      translations.single.pages.single.bubbles.single.translation,
+      'Xin chao',
+    );
   });
 
   group('trusted offline clock', () {
@@ -388,6 +572,20 @@ Map<String, dynamic> _pageJson({required int page, required int offset}) => {
   'ciphertextSha256': 'b' * 64,
 };
 
+Map<String, dynamic> _translationJson({
+  required String language,
+  required int offset,
+}) => {
+  'languageCode': language,
+  'offset': offset,
+  'length': 32,
+  'nonce': _b64(List<int>.filled(12, 9)),
+  'contentType': 'application/json',
+  'plaintextLength': 16,
+  'translationSha256': 'c' * 64,
+  'ciphertextSha256': 'd' * 64,
+};
+
 List<int> _header(int length) => [
   ...ascii.encode('CVPK1'),
   (length >> 24) & 0xff,
@@ -494,6 +692,72 @@ class _StaticVerifier implements OfflineLicenseVerifier {
   @override
   Future<OfflineLicenseClaims> verify(String compactJws) async =>
       claims[compactJws]!;
+}
+
+class _MemoryPackageStore implements OfflineDownloadStore {
+  _MemoryPackageStore(this.bytes);
+
+  final Uint8List bytes;
+
+  @override
+  Future<void> commitPackage(StagedOfflinePackage package) async {}
+
+  @override
+  Future<void> deleteAccountPackages(String accountScope) async {}
+
+  @override
+  Future<void> deletePackage({
+    required String accountScope,
+    required String chapterId,
+  }) async {}
+
+  @override
+  Future<void> discardStagedPackage(StagedOfflinePackage package) async {}
+
+  @override
+  Future<bool> isSupported() async => true;
+
+  @override
+  Future<bool> packageExists({
+    required String accountScope,
+    required String chapterId,
+  }) async => true;
+
+  @override
+  Future<int> packageLength({
+    required String accountScope,
+    required String chapterId,
+    bool staged = false,
+  }) async => bytes.length;
+
+  @override
+  Future<String> packagePath({
+    required String accountScope,
+    required String chapterId,
+  }) async => 'memory.cvpack';
+
+  @override
+  Future<String> packageSha256({
+    required String accountScope,
+    required String chapterId,
+  }) async => sha256.convert(bytes).toString();
+
+  @override
+  Future<Uint8List> readRange({
+    required String accountScope,
+    required String chapterId,
+    required int offset,
+    required int length,
+    bool staged = false,
+  }) async => Uint8List.fromList(bytes.sublist(offset, offset + length));
+
+  @override
+  Future<StagedOfflinePackage> stagePackage({
+    required String accountScope,
+    required String chapterId,
+    required Stream<List<int>> bytes,
+    int maximumBytes = 150 * 1024 * 1024,
+  }) => throw UnsupportedError('Not used by this test');
 }
 
 class _FakePlatformSecurity implements OfflinePlatformSecurity {

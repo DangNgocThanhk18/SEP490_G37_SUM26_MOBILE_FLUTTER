@@ -166,10 +166,15 @@ class OfflineDownloadService extends ChangeNotifier {
 
   static const maximumPackageBytes = 150 * 1024 * 1024;
   static const maximumPageCiphertextBytes = 12 * 1024 * 1024 + 16;
+  static const maximumTranslationCiphertextBytes = 4 * 1024 * 1024 + 16;
   static const maximumPages = 200;
   static const renewalWindow = Duration(hours: 24);
   static const rollbackTolerance = Duration(minutes: 2);
   static const maximumOfflinePeriod = Duration(days: 7, minutes: 5);
+  static const _pageAadFormat =
+      'CVPK1|packageId|userId|chapterId|deviceKeySha256|contentRevision|pageNumber|pageSha256';
+  static const _translationAadFormat =
+      'CVPK2|packageId|userId|chapterId|deviceKeySha256|contentRevision|translation|languageCode|translationSha256';
   static const _deviceIdKey = 'comiverse_offline_install_id_v1';
 
   final ApiClient apiClient;
@@ -188,6 +193,7 @@ class OfflineDownloadService extends ChangeNotifier {
   final Map<String, Future<OfflineDownloadEntry>> _activeRenewals = {};
   final Map<String, _OpenOfflineSession> _openSessions = {};
   final Map<String, _TrustedTimeAnchor> _trustedAnchors = {};
+  final Map<String, List<ChapterTranslation>> _translationCache = {};
   int _decryptionEpoch = 0;
   bool _isForeground = true;
 
@@ -237,6 +243,7 @@ class OfflineDownloadService extends ChangeNotifier {
     _verifiedPreparedPages.clear();
     _openSessions.clear();
     _trustedAnchors.clear();
+    _translationCache.clear();
     for (final bytes in _pageBytesCache.values) {
       _evictPageBytes(bytes);
     }
@@ -431,6 +438,9 @@ class OfflineDownloadService extends ChangeNotifier {
       await _anchorTrustedTime(account, claims.serverTime);
       _verifiedPackageHashes.add(_verifiedKey(entry));
       _openSessions.remove(entry.chapterId);
+      _translationCache.removeWhere(
+        (key, _) => key.startsWith('${entry.chapterId}:'),
+      );
       notifyListeners();
       return entry;
     } finally {
@@ -512,6 +522,7 @@ class OfflineDownloadService extends ChangeNotifier {
     await _anchorTrustedTime(account, claims.serverTime);
     notifyListeners();
     _openSessions.remove(chapterId);
+    _translationCache.removeWhere((key, _) => key.startsWith('$chapterId:'));
     return updated;
   }
 
@@ -543,6 +554,120 @@ class OfflineDownloadService extends ChangeNotifier {
       comicId: entry.comicId,
       images: imageUris,
     );
+  }
+
+  Future<List<ChapterTranslation>> openTranslations(String chapterId) async {
+    final operationEpoch = _decryptionEpoch;
+    if (!_isForeground) {
+      throw const OfflineDownloadException(
+        'app_backgrounded',
+        'Offline translations are locked while the app is in the background.',
+      );
+    }
+    var entry = await _validatedEntry(chapterId);
+    try {
+      await _validateTrustedTime(entry);
+    } on OfflineDownloadException catch (error) {
+      if (!error.requiresOnline) rethrow;
+      entry = await renewChapter(chapterId);
+      await _validateTrustedTime(entry);
+    }
+    if (entry.manifest.translations.isEmpty) {
+      return const <ChapterTranslation>[];
+    }
+
+    final cacheKey = '${entry.chapterId}:${entry.packageSha256}';
+    final cached = _translationCache[cacheKey];
+    if (cached != null) return List<ChapterTranslation>.of(cached);
+
+    final claims = await licenseVerifier.verify(entry.licenseToken);
+    final session = _OpenOfflineSession(entry, claims)..markValidated();
+    _openSessions[chapterId] = session;
+    final translations = <ChapterTranslation>[];
+    for (final resource in entry.manifest.translations) {
+      translations.add(
+        await _decryptTranslation(
+          session: session,
+          resource: resource,
+          operationEpoch: operationEpoch,
+        ),
+      );
+    }
+    _ensureActiveDecryption(operationEpoch);
+    _translationCache[cacheKey] = translations;
+    return List<ChapterTranslation>.of(translations);
+  }
+
+  Future<ChapterTranslation> _decryptTranslation({
+    required _OpenOfflineSession session,
+    required CvPackTranslation resource,
+    required int operationEpoch,
+  }) async {
+    final entry = session.entry;
+    final encrypted = await store.readRange(
+      accountScope: _requireAccount(),
+      chapterId: entry.chapterId,
+      offset: entry.manifest.payloadOffset + resource.offset,
+      length: resource.length,
+    );
+    Uint8List? plaintext;
+    try {
+      if (await compute(_computeSha256, encrypted) !=
+          resource.ciphertextSha256) {
+        throw const OfflineDownloadException(
+          'corrupted_package',
+          'The downloaded translation failed its integrity check.',
+        );
+      }
+      plaintext = await platformSecurity.decryptPage(
+        accountScope: _requireAccount(),
+        wrappedContentKey: entry.wrappedContentKey,
+        keyAlgorithm: entry.keyAlgorithm,
+        nonce: Uint8List.fromList(decodeBase64Url(resource.nonce)),
+        encryptedPage: encrypted,
+        aad: Uint8List.fromList(
+          utf8.encode(
+            session.claims.aadForTranslation(
+              resource.languageCode,
+              resource.translationSha256,
+            ),
+          ),
+        ),
+      );
+      if (plaintext.length != resource.plaintextLength ||
+          await compute(_computeSha256, plaintext) !=
+              resource.translationSha256) {
+        throw const OfflineDownloadException(
+          'corrupted_package',
+          'The decrypted translation failed its integrity check.',
+        );
+      }
+      _ensureActiveDecryption(operationEpoch, plaintext: plaintext);
+      final decoded = jsonDecode(utf8.decode(plaintext));
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Invalid translation payload');
+      }
+      final translation = ChapterTranslation.fromJson(decoded);
+      if (translation.languageCode.toLowerCase() != resource.languageCode) {
+        throw const FormatException('Translation language mismatch');
+      }
+      return translation;
+    } on OfflineDownloadException {
+      rethrow;
+    } on FormatException {
+      throw const OfflineDownloadException(
+        'corrupted_package',
+        'The downloaded translation data is invalid.',
+      );
+    } catch (_) {
+      throw const OfflineDownloadException(
+        'decryption_failed',
+        'This translation cannot be opened on this device. Download the chapter again.',
+      );
+    } finally {
+      _clearBytes(encrypted);
+      if (plaintext != null) _clearBytes(plaintext);
+    }
   }
 
   Future<Uint8List> readPage(String offlineUri) async {
@@ -860,6 +985,7 @@ class OfflineDownloadService extends ChangeNotifier {
     _invalidPackageHashes.removeWhere((key) => key.startsWith('$chapterId:'));
     _verifiedPreparedPages.removeWhere((key) => key.startsWith('$chapterId:'));
     _openSessions.remove(chapterId);
+    _translationCache.removeWhere((key, _) => key.startsWith('$chapterId:'));
     await platformSecurity.clearTransientKeys();
     notifyListeners();
   }
@@ -995,7 +1121,9 @@ class OfflineDownloadService extends ChangeNotifier {
       'License mismatch: $detail',
     );
 
-    if (claims.formatVersion != 1) fail('formatVersion');
+    if (claims.formatVersion != 1 && claims.formatVersion != 2) {
+      fail('formatVersion');
+    }
     if (claims.userId != account) fail('userId');
     if (claims.chapterId != chapterId) fail('chapterId');
     final expectedDeviceIdHash = sha256
@@ -1106,7 +1234,7 @@ class OfflineDownloadService extends ChangeNotifier {
       manifestBytes: manifestBytes,
       packageLength: packageLength,
     );
-    if (manifest.version != 1 ||
+    if (manifest.version != claims.formatVersion ||
         manifest.pages.length > maximumPages ||
         manifest.packageId != claims.packageId ||
         manifest.userId != claims.userId ||
@@ -1118,8 +1246,10 @@ class OfflineDownloadService extends ChangeNotifier {
         manifest.offsetBase != 'PAYLOAD' ||
         manifest.cipher != 'AES-256-GCM' ||
         manifest.tagLengthBits != 128 ||
-        manifest.aadFormat !=
-            'CVPK1|packageId|userId|chapterId|deviceKeySha256|contentRevision|pageNumber|pageSha256' ||
+        manifest.aadFormat != _pageAadFormat ||
+        (manifest.version == 1 && manifest.translations.isNotEmpty) ||
+        (manifest.version >= 2 &&
+            manifest.translationAadFormat != _translationAadFormat) ||
         manifest.contentRevision != claims.contentRevision) {
       throw const OfflineDownloadException(
         'corrupted_package',
@@ -1138,6 +1268,17 @@ class OfflineDownloadService extends ChangeNotifier {
         throw const OfflineDownloadException(
           'corrupted_package',
           'The downloaded chapter contains an invalid page.',
+        );
+      }
+    }
+    for (final translation in manifest.translations) {
+      if (translation.length > maximumTranslationCiphertextBytes ||
+          translation.plaintextLength >
+              maximumTranslationCiphertextBytes - 16 ||
+          translation.contentType.toLowerCase() != 'application/json') {
+        throw const OfflineDownloadException(
+          'corrupted_package',
+          'The downloaded chapter contains an invalid translation.',
         );
       }
     }

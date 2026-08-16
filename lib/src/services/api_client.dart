@@ -1187,6 +1187,7 @@ class ApiClient {
   Future<OfflinePackageResponse> downloadOfflineChapter({
     required String chapterId,
     required String deviceKeyId,
+    bool includeTranslations = true,
   }) async {
     if (!hasToken) {
       throw const ApiException(
@@ -1202,7 +1203,10 @@ class ApiClient {
       ..headers['Accept'] = 'application/vnd.comiverse.cvpack, application/json'
       ..headers['Accept-Language'] = _languageCode
       ..headers['Authorization'] = 'Bearer $_token'
-      ..body = jsonEncode({'deviceKeyId': deviceKeyId});
+      ..body = jsonEncode({
+        'deviceKeyId': deviceKeyId,
+        'includeTranslations': includeTranslations,
+      });
     try {
       // The backend creates, encrypts, and hashes the package before sending
       // headers. Large chapters legitimately need longer than an ordinary API

@@ -31,7 +31,9 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       widget.offlineDownloads.listDownloads();
 
   Future<void> _reload() async {
-    setState(() { _future = _load(); });
+    setState(() {
+      _future = _load();
+    });
     await _future;
   }
 
@@ -181,7 +183,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     subtitle: Text(
-                      '${context.tr('Chapter {number}', values: {'number': entry.chapterNumber})}\n'
+                      '${context.tr('Chapter {number}', values: {'number': entry.chapterNumber})} · ${_includedLanguages(context, entry)}\n'
                       '${context.tr('Offline until {date}', values: {'date': _date(entry.offlineUntil)})} · ${_size(entry.sizeBytes)}',
                     ),
                     isThreeLine: true,
@@ -215,6 +217,20 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   static String _date(DateTime value) =>
       '${value.day.toString().padLeft(2, '0')}/'
       '${value.month.toString().padLeft(2, '0')}/${value.year}';
+
+  static String _includedLanguages(
+    BuildContext context,
+    OfflineDownloadEntry entry,
+  ) {
+    final translations = entry.manifest.translationLanguages
+        .map((code) => code.toUpperCase())
+        .join(', ');
+    if (translations.isEmpty) return context.tr('Original');
+    return context.tr(
+      'Original + {languages}',
+      values: {'languages': translations},
+    );
+  }
 
   static String _size(int bytes) {
     final mb = bytes / (1024 * 1024);

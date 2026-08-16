@@ -167,11 +167,19 @@ const Map<String, String> _vietnamese = {
   'Download chapters': 'Tải chương truyện',
   'Premium is verified by the server. Offline access must be renewed every 7 days.':
       'Premium được máy chủ xác minh. Quyền đọc ngoại tuyến phải được gia hạn mỗi 7 ngày.',
+  'Each download includes the original pages and every approved translation available for that chapter.':
+      'Mỗi bản tải gồm các trang gốc và mọi bản dịch đã được duyệt hiện có của chương đó.',
+  'Published languages in this comic':
+      'Các ngôn ngữ đã xuất bản trong truyện này',
+  'Original': 'Bản gốc',
+  'Original + {languages}': 'Bản gốc + {languages}',
   'Download complete': 'Tải xuống hoàn tất',
   'Download failed': 'Tải xuống thất bại',
   'Download again': 'Tải lại',
   'Chapter {number} is ready to read offline.':
       'Chương {number} đã sẵn sàng để đọc ngoại tuyến.',
+  'Chapter {number} is ready offline with its available translations.':
+      'Chương {number} cùng các bản dịch hiện có đã sẵn sàng để đọc ngoại tuyến.',
   'Offline access renewed': 'Đã gia hạn quyền đọc ngoại tuyến',
   'This chapter can be read offline for up to 7 more days.':
       'Chương này có thể được đọc ngoại tuyến thêm tối đa 7 ngày.',

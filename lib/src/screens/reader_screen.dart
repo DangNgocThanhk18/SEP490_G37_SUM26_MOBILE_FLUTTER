@@ -520,9 +520,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         .toInt();
     _selectedLanguage = widget.initialLanguage;
     _futureChapter = _loadChapterDetail();
-    _futureTranslations = widget.preferOffline
-        ? Future.value(const <ChapterTranslation>[])
-        : widget.apiClient.getChapterTranslations(_chapter.id);
+    _futureTranslations = _loadChapterTranslations();
     _scrollController.addListener(_handleScroll);
     _captureProtectionAcquired = true;
     unawaited(ScreenCaptureProtection.acquire());
@@ -577,9 +575,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _preloadWindowGeneration++;
       _preloadQueue = Future<void>.value();
       _futureChapter = _loadChapterDetail();
-      _futureTranslations = widget.preferOffline
-          ? Future.value(const <ChapterTranslation>[])
-          : widget.apiClient.getChapterTranslations(_chapter.id);
+      _futureTranslations = _loadChapterTranslations();
       _lastOffset = 0;
     });
     _releaseScrollHold();
@@ -600,6 +596,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
     } catch (_) {
       if (offline != null && await offline.hasDownload(_chapter.id)) {
         return offline.openChapter(_chapter.id);
+      }
+      rethrow;
+    }
+  }
+
+  Future<List<ChapterTranslation>> _loadChapterTranslations() async {
+    final offline = widget.offlineDownloads;
+    if (widget.preferOffline && offline != null) {
+      return offline.openTranslations(_chapter.id);
+    }
+    try {
+      return await widget.apiClient.getChapterTranslations(_chapter.id);
+    } catch (_) {
+      if (offline != null && await offline.hasDownload(_chapter.id)) {
+        return offline.openTranslations(_chapter.id);
       }
       rethrow;
     }

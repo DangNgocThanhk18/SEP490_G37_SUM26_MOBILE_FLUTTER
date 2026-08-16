@@ -138,6 +138,58 @@ void main() {
     },
   );
 
+  test('requests translated content in secure offline packages', () async {
+    final storage = _MemorySessionStorage();
+    await storage.write('comiverse_access_token', 'reader-token');
+    await storage.write(
+      'comiverse_user_profile',
+      jsonEncode({
+        'userId': 'reader-1',
+        'username': 'reader',
+        'email': 'reader@comiverse.test',
+      }),
+    );
+    http.Request? captured;
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8081/api',
+      sessionStorage: storage,
+      httpClient: MockClient((request) async {
+        captured = request;
+        return http.Response.bytes(
+          const [1, 2, 3],
+          200,
+          headers: {
+            'content-type': 'application/vnd.comiverse.cvpack',
+            'x-comiverse-license': 'signed-license',
+            'x-comiverse-wrapped-key': 'wrapped-key',
+            'x-comiverse-key-algorithm': 'RSA-OAEP-SHA256-MGF1SHA1',
+            'x-comiverse-license-expires-at': '2026-08-23T12:00:00Z',
+            'x-comiverse-server-time': '2026-08-16T12:00:00Z',
+            'x-comiverse-package-sha256': 'a' * 64,
+            'x-comiverse-manifest-sha256': 'b' * 64,
+            'x-comiverse-package-id': 'package-1',
+            'x-comiverse-device-key-id': 'device-1',
+            'x-comiverse-format-version': '2',
+            'x-comiverse-signing-key-id': 'offline-ed25519-v1',
+          },
+        );
+      }),
+    );
+    await client.restoreSession();
+
+    final response = await client.downloadOfflineChapter(
+      chapterId: 'chapter-1',
+      deviceKeyId: 'device-1',
+    );
+    expect(await response.bytes.expand((chunk) => chunk).toList(), [1, 2, 3]);
+    expect(captured?.url.path, '/api/downloads/chapters/chapter-1');
+    expect(captured?.headers['Authorization'], 'Bearer reader-token');
+    expect(jsonDecode(captured!.body), {
+      'deviceKeyId': 'device-1',
+      'includeTranslations': true,
+    });
+  });
+
   test(
     'updates the profile and notification preference API contracts',
     () async {

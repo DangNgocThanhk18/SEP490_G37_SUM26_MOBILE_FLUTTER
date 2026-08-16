@@ -238,6 +238,11 @@ class OfflineLicenseClaims {
   String aadForPage(int pageNumber, String pageSha256) =>
       'CVPK1|$packageId|$userId|$chapterId|$deviceKeySha256|'
       '$contentRevision|$pageNumber|${pageSha256.toLowerCase()}';
+
+  String aadForTranslation(String languageCode, String translationSha256) =>
+      'CVPK2|$packageId|$userId|$chapterId|$deviceKeySha256|'
+      '$contentRevision|translation|${languageCode.toLowerCase()}|'
+      '${translationSha256.toLowerCase()}';
 }
 
 class OfflineLicenseRenewal {
@@ -324,6 +329,43 @@ class CvPackPage {
   );
 }
 
+class CvPackTranslation {
+  const CvPackTranslation({
+    required this.languageCode,
+    required this.offset,
+    required this.length,
+    required this.nonce,
+    required this.contentType,
+    required this.plaintextLength,
+    required this.translationSha256,
+    required this.ciphertextSha256,
+  });
+
+  final String languageCode;
+  final int offset;
+  final int length;
+  final String nonce;
+  final String contentType;
+  final int plaintextLength;
+  final String translationSha256;
+  final String ciphertextSha256;
+
+  factory CvPackTranslation.fromJson(Map<String, dynamic> json) =>
+      CvPackTranslation(
+        languageCode: _requiredText(json, 'languageCode').toLowerCase(),
+        offset: _requiredInt(json, 'offset'),
+        length: _requiredInt(json, 'length'),
+        nonce: _requiredText(json, 'nonce'),
+        contentType: _requiredText(json, 'contentType'),
+        plaintextLength: _requiredInt(json, 'plaintextLength'),
+        translationSha256: _requiredText(
+          json,
+          'translationSha256',
+        ).toLowerCase(),
+        ciphertextSha256: _requiredText(json, 'ciphertextSha256').toLowerCase(),
+      );
+}
+
 class CvPackManifest {
   const CvPackManifest({
     required this.version,
@@ -341,12 +383,15 @@ class CvPackManifest {
     required this.aadFormat,
     required this.payloadOffset,
     required this.pages,
+    this.translationAadFormat,
+    this.translations = const [],
   });
 
   static const magic = 'CVPK1';
   static const fixedHeaderLength = 9;
   static const maximumManifestBytes = 2 * 1024 * 1024;
   static const maximumPages = 200;
+  static const maximumTranslations = 32;
 
   final int version;
   final String packageId;
@@ -363,14 +408,28 @@ class CvPackManifest {
   final String aadFormat;
   final int payloadOffset;
   final List<CvPackPage> pages;
+  final String? translationAadFormat;
+  final List<CvPackTranslation> translations;
 
   int get pageCount => pages.length;
+
+  List<String> get translationLanguages => translations
+      .map((translation) => translation.languageCode)
+      .toList(growable: false);
 
   CvPackPage page(int pageNumber) => pages.firstWhere(
     (entry) => entry.pageNumber == pageNumber,
     orElse: () => throw const OfflineDownloadException(
       'corrupted_package',
       'The downloaded chapter page is missing.',
+    ),
+  );
+
+  CvPackTranslation translation(String languageCode) => translations.firstWhere(
+    (entry) => entry.languageCode == languageCode.toLowerCase(),
+    orElse: () => throw const OfflineDownloadException(
+      'translation_not_downloaded',
+      'This translation is not included in the downloaded chapter.',
     ),
   );
 
@@ -403,6 +462,7 @@ class CvPackManifest {
         'The downloaded chapter manifest is invalid.',
       );
     }
+    final version = _requiredInt(decoded, 'version');
     final rawPages = decoded['pages'];
     if (rawPages is! List ||
         rawPages.isEmpty ||
@@ -420,6 +480,33 @@ class CvPackManifest {
       throw const OfflineDownloadException(
         'corrupted_package',
         'The downloaded chapter page index is invalid.',
+      );
+    }
+    var translations = const <CvPackTranslation>[];
+    final rawTranslations = decoded['translations'];
+    if (version >= 2) {
+      if (rawTranslations is! List ||
+          rawTranslations.length > maximumTranslations) {
+        throw const OfflineDownloadException(
+          'corrupted_package',
+          'The downloaded chapter translation index is invalid.',
+        );
+      }
+      translations = rawTranslations
+          .whereType<Map<String, dynamic>>()
+          .map(CvPackTranslation.fromJson)
+          .toList(growable: false);
+      if (translations.length != rawTranslations.length ||
+          _requiredInt(decoded, 'translationCount') != translations.length) {
+        throw const OfflineDownloadException(
+          'corrupted_package',
+          'The downloaded chapter translation count is invalid.',
+        );
+      }
+    } else if (rawTranslations is List && rawTranslations.isNotEmpty) {
+      throw const OfflineDownloadException(
+        'corrupted_package',
+        'This package version cannot contain translations.',
       );
     }
     final payloadOffset = fixedHeaderLength + manifestLength;
@@ -446,12 +533,35 @@ class CvPackManifest {
       }
       ranges.add((absoluteStart, absoluteEnd));
     }
+    final seenLanguages = <String>{};
+    for (final translation in translations) {
+      final nonce = _decodeBase64Url(translation.nonce);
+      final absoluteStart = payloadOffset + translation.offset;
+      final absoluteEnd = absoluteStart + translation.length;
+      if (!RegExp(r'^[a-z0-9]{2,16}$').hasMatch(translation.languageCode) ||
+          !seenLanguages.add(translation.languageCode) ||
+          translation.offset < 0 ||
+          translation.length <= 16 ||
+          nonce.length != 12 ||
+          translation.plaintextLength <= 0 ||
+          translation.contentType.toLowerCase() != 'application/json' ||
+          !RegExp(r'^[0-9a-f]{64}$').hasMatch(translation.translationSha256) ||
+          !RegExp(r'^[0-9a-f]{64}$').hasMatch(translation.ciphertextSha256) ||
+          absoluteStart < payloadOffset ||
+          absoluteEnd > packageLength) {
+        throw const OfflineDownloadException(
+          'corrupted_package',
+          'The downloaded chapter translation index is invalid.',
+        );
+      }
+      ranges.add((absoluteStart, absoluteEnd));
+    }
     ranges.sort((left, right) => left.$1.compareTo(right.$1));
     for (var index = 1; index < ranges.length; index++) {
       if (ranges[index].$1 < ranges[index - 1].$2) {
         throw const OfflineDownloadException(
           'corrupted_package',
-          'The downloaded chapter contains overlapping page data.',
+          'The downloaded chapter contains overlapping payload data.',
         );
       }
     }
@@ -467,7 +577,7 @@ class CvPackManifest {
       );
     }
     return CvPackManifest(
-      version: _requiredInt(decoded, 'version'),
+      version: version,
       packageId: _requiredText(decoded, 'packageId'),
       chapterId: _requiredText(decoded, 'chapterId'),
       comicId: _requiredText(decoded, 'comicId'),
@@ -482,6 +592,8 @@ class CvPackManifest {
       aadFormat: _requiredText(decoded, 'aadFormat'),
       payloadOffset: payloadOffset,
       pages: pages,
+      translationAadFormat: decoded['translationAadFormat']?.toString(),
+      translations: translations,
     );
   }
 }
@@ -578,6 +690,8 @@ class OfflineDownloadEntry {
       'tagLengthBits': manifest.tagLengthBits,
       'aadFormat': manifest.aadFormat,
       'payloadOffset': manifest.payloadOffset,
+      if (manifest.translationAadFormat != null)
+        'translationAadFormat': manifest.translationAadFormat,
       'pages': [
         for (final page in manifest.pages)
           {
@@ -589,6 +703,19 @@ class OfflineDownloadEntry {
             'plaintextLength': page.plaintextLength,
             'pageSha256': page.pageSha256,
             'ciphertextSha256': page.ciphertextSha256,
+          },
+      ],
+      'translations': [
+        for (final translation in manifest.translations)
+          {
+            'languageCode': translation.languageCode,
+            'offset': translation.offset,
+            'length': translation.length,
+            'nonce': translation.nonce,
+            'contentType': translation.contentType,
+            'plaintextLength': translation.plaintextLength,
+            'translationSha256': translation.translationSha256,
+            'ciphertextSha256': translation.ciphertextSha256,
           },
       ],
     },
@@ -605,6 +732,13 @@ class OfflineDownloadEntry {
         .whereType<Map<String, dynamic>>()
         .map(CvPackPage.fromJson)
         .toList(growable: false);
+    final rawTranslations = manifestJson['translations'];
+    final translations = rawTranslations is List
+        ? rawTranslations
+              .whereType<Map<String, dynamic>>()
+              .map(CvPackTranslation.fromJson)
+              .toList(growable: false)
+        : const <CvPackTranslation>[];
     return OfflineDownloadEntry(
       chapterId: _requiredText(json, 'chapterId'),
       comicId: _requiredText(json, 'comicId'),
@@ -639,6 +773,8 @@ class OfflineDownloadEntry {
         aadFormat: _requiredText(manifestJson, 'aadFormat'),
         payloadOffset: _requiredInt(manifestJson, 'payloadOffset'),
         pages: pages,
+        translationAadFormat: manifestJson['translationAadFormat']?.toString(),
+        translations: translations,
       ),
     );
   }

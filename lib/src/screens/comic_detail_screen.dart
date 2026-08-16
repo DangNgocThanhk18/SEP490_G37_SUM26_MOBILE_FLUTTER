@@ -440,7 +440,11 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                                   'An active Premium plan is required for offline downloads.',
                                 ),
                                 onTap: _canDownloadOffline
-                                    ? () => _showDownloadPicker(comic, chapters)
+                                    ? () => _showDownloadPicker(
+                                        comic,
+                                        chapters,
+                                        data?.languages ?? const [],
+                                      )
                                     : null,
                               ),
                             ],
@@ -604,6 +608,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
   Future<void> _showDownloadPicker(
     Comic comic,
     List<ChapterLite> chapters,
+    List<String> translationLanguages,
   ) async {
     if (!_canDownloadOffline) {
       _showMessage(
@@ -636,6 +641,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
         chapters: chapters,
         comicTitle: comic.title,
         service: service,
+        translationLanguages: translationLanguages,
       ),
     );
   }
@@ -646,11 +652,13 @@ class _DownloadChapterSheet extends StatefulWidget {
     required this.chapters,
     required this.comicTitle,
     required this.service,
+    required this.translationLanguages,
   });
 
   final List<ChapterLite> chapters;
   final String comicTitle;
   final OfflineDownloadService service;
+  final List<String> translationLanguages;
 
   @override
   State<_DownloadChapterSheet> createState() => _DownloadChapterSheetState();
@@ -689,7 +697,7 @@ class _DownloadChapterSheetState extends State<_DownloadChapterSheet> {
         context,
         title: context.tr('Download complete'),
         message: context.tr(
-          'Chapter {number} is ready to read offline.',
+          'Chapter {number} is ready offline with its available translations.',
           values: {'number': chapter.chapterNumber},
         ),
       );
@@ -728,6 +736,47 @@ class _DownloadChapterSheetState extends State<_DownloadChapterSheet> {
                       'Premium is verified by the server. Offline access must be renewed every 7 days.',
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.translate_rounded, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          context.tr(
+                            'Each download includes the original pages and every approved translation available for that chapter.',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (widget.translationLanguages.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      context.tr('Published languages in this comic'),
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        Chip(
+                          avatar: const Icon(Icons.image_outlined, size: 17),
+                          label: Text(context.tr('Original')),
+                        ),
+                        for (final language in widget.translationLanguages)
+                          Chip(
+                            avatar: const Icon(
+                              Icons.translate_rounded,
+                              size: 17,
+                            ),
+                            label: Text(_offlineLanguageLabel(language)),
+                          ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -772,6 +821,20 @@ class _DownloadChapterSheetState extends State<_DownloadChapterSheet> {
       ),
     );
   }
+}
+
+String _offlineLanguageLabel(String code) {
+  return switch (code.toLowerCase()) {
+    'vi' => 'Tiếng Việt',
+    'en' => 'English',
+    'jp' || 'ja' => 'Japanese',
+    'ko' => 'Korean',
+    'zh' => 'Chinese',
+    'fr' => 'French',
+    'de' => 'German',
+    'es' => 'Spanish',
+    _ => code.toUpperCase(),
+  };
 }
 
 class _DetailHero extends StatelessWidget {
