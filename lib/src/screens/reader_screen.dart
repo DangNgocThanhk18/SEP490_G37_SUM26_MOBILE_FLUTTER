@@ -4,7 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
+import 'package:flutter/rendering.dart' show RenderBox, ScrollCacheExtent;
 import 'package:flutter/services.dart';
 
 import '../l10n/app_localizations.dart';
@@ -489,6 +489,7 @@ class ReaderScreen extends StatefulWidget {
 
 class _ReaderScreenState extends State<ReaderScreen> {
   final ScrollController _scrollController = ScrollController();
+  final PageController _pageController = PageController();
   final ValueNotifier<double> _progressNotifier = ValueNotifier<double>(0);
   final ValueNotifier<bool> _controlsVisibleNotifier = ValueNotifier<bool>(
     true,
@@ -499,6 +500,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   double _lastOffset = 0;
   final Set<String> _activeImagePreloads = {};
   final Map<String, double> _pageAspectRatios = {};
+  final Map<int, GlobalKey> _scrollPageKeys = {};
   Set<int> _highResolutionPageIndexes = const {};
   bool _readerGestureLocked = false;
   ScrollHoldController? _scrollHoldController;
@@ -509,8 +511,38 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Future<void> _preloadQueue = Future<void>.value();
   late String? _selectedLanguage; // null = original (no bubble overlay)
   bool _captureProtectionAcquired = false;
+  ComicReadingMode _readingMode = ComicReadingMode.verticalScroll;
+  SavedReaderPosition? _savedPosition;
+  Timer? _progressSaveDebounce;
+  int _currentPageIndex = 0;
+  int _knownPageCount = 0;
+  int _positionGeneration = 0;
+  bool _readerSetupReady = false;
+  bool _positionRestoreScheduled = false;
+  bool _positionApplied = false;
+  Offset? _pendingPagedTapPosition;
 
   ChapterLite get _chapter => widget.chapters[_currentIndex];
+
+  AppPreferences get _effectivePreferences =>
+      widget.preferences ?? const SecureAppPreferences();
+
+  ReaderPreferences? get _readerPreferences {
+    final preferences = _effectivePreferences;
+    if (preferences is! ReaderPreferences) return null;
+    return preferences as ReaderPreferences;
+  }
+
+  String get _readerAccountScope {
+    final user = widget.apiClient.currentUser;
+    final userId = user?.userId?.trim();
+    if (userId != null && userId.isNotEmpty) return 'user:$userId';
+    final email = user?.email.trim();
+    if (email != null && email.isNotEmpty) return 'email:$email';
+    final viewer = widget.viewerIdentifier?.trim();
+    if (viewer != null && viewer.isNotEmpty) return 'viewer:$viewer';
+    return 'guest';
+  }
 
   @override
   void initState() {
@@ -522,12 +554,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _futureChapter = _loadChapterDetail();
     _futureTranslations = _loadChapterTranslations();
     _scrollController.addListener(_handleScroll);
+    unawaited(_restoreReaderState(restoreMode: true));
     _captureProtectionAcquired = true;
     unawaited(ScreenCaptureProtection.acquire());
   }
 
   @override
   void dispose() {
+    _progressSaveDebounce?.cancel();
+    unawaited(_persistCurrentPosition());
     _preloadGeneration++;
     _preloadWindowGeneration++;
     _releaseScrollHold();
@@ -537,6 +572,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
     _controlsVisibleNotifier.dispose();
     _progressNotifier.dispose();
+    _pageController.dispose();
     _scrollController
       ..removeListener(_handleScroll)
       ..dispose();
@@ -544,6 +580,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _handleScroll() {
+    if (!_scrollController.hasClients) return;
     final offset = _scrollController.offset;
     final delta = offset - _lastOffset;
     final max = _scrollController.position.maxScrollExtent;
@@ -558,11 +595,302 @@ class _ReaderScreenState extends State<ReaderScreen> {
         nextProgress == 1) {
       _progressNotifier.value = nextProgress;
     }
+    _updateVisibleScrollPage();
+    if (_positionApplied) _scheduleProgressSave();
     _lastOffset = offset;
+  }
+
+  Future<void> _restoreReaderState({required bool restoreMode}) async {
+    final chapterId = _chapter.id;
+    final generation = ++_positionGeneration;
+    var mode = _readingMode;
+    var language = _selectedLanguage;
+    SavedReaderPosition? position;
+
+    final readerPreferences = _readerPreferences;
+    if (restoreMode && readerPreferences != null) {
+      try {
+        mode = await readerPreferences.readComicReadingMode();
+      } catch (_) {
+        mode = ComicReadingMode.verticalScroll;
+      }
+    }
+    if (restoreMode && widget.initialLanguage == null) {
+      try {
+        language = await _effectivePreferences.readPreferredReadingLanguage();
+      } catch (_) {
+        // Reader remains usable when secure storage is unavailable.
+      }
+    }
+    if (readerPreferences != null) {
+      try {
+        position = await readerPreferences.readReaderPosition(
+          accountScope: _readerAccountScope,
+          chapterId: chapterId,
+        );
+      } catch (_) {
+        // A damaged or unavailable preference must never block reading.
+      }
+    }
+    if (!mounted ||
+        generation != _positionGeneration ||
+        _chapter.id != chapterId) {
+      return;
+    }
+
+    setState(() {
+      _readingMode = mode;
+      _selectedLanguage = language;
+      _savedPosition = position;
+      _currentPageIndex = position?.pageIndex ?? 0;
+      _readerSetupReady = true;
+      _positionRestoreScheduled = false;
+      _positionApplied = false;
+    });
+  }
+
+  void _updateVisibleScrollPage() {
+    if (_readingMode.isPaged || !mounted || _scrollPageKeys.isEmpty) return;
+    final viewportHeight = MediaQuery.sizeOf(context).height;
+    var bestIndex = _currentPageIndex;
+    var bestVisibleHeight = -1.0;
+    for (final entry in _scrollPageKeys.entries) {
+      final renderObject = entry.value.currentContext?.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.attached) continue;
+      final top = renderObject.localToGlobal(Offset.zero).dy;
+      final bottom = top + renderObject.size.height;
+      final visibleHeight =
+          (bottom.clamp(0.0, viewportHeight) - top.clamp(0.0, viewportHeight))
+              .clamp(0.0, viewportHeight);
+      if (visibleHeight > bestVisibleHeight) {
+        bestVisibleHeight = visibleHeight;
+        bestIndex = entry.key;
+      }
+    }
+    _currentPageIndex = bestIndex;
+  }
+
+  SavedReaderPosition _currentSavedPosition() {
+    final pageCount = _knownPageCount;
+    final maxIndex = pageCount > 0 ? pageCount - 1 : 0;
+    final pageIndex = _currentPageIndex.clamp(0, maxIndex).toInt();
+    final scrollProgress = _readingMode.isPaged
+        ? (pageCount <= 1 ? 0.0 : pageIndex / maxIndex)
+        : _progressNotifier.value.clamp(0.0, 1.0);
+    return SavedReaderPosition(
+      pageIndex: pageIndex,
+      scrollProgress: scrollProgress,
+    );
+  }
+
+  void _scheduleProgressSave() {
+    _progressSaveDebounce?.cancel();
+    _progressSaveDebounce = Timer(const Duration(milliseconds: 400), () {
+      unawaited(_persistCurrentPosition());
+    });
+  }
+
+  Future<void> _persistCurrentPosition() {
+    return _writeReaderPosition(_chapter.id, _currentSavedPosition());
+  }
+
+  Future<void> _writeReaderPosition(
+    String chapterId,
+    SavedReaderPosition position,
+  ) async {
+    final preferences = _readerPreferences;
+    if (preferences == null || chapterId.trim().isEmpty) return;
+    try {
+      await preferences.writeReaderPosition(
+        accountScope: _readerAccountScope,
+        chapterId: chapterId,
+        position: position,
+      );
+    } catch (_) {
+      // Reading should not fail because local progress cannot be persisted.
+    }
+  }
+
+  void _schedulePositionRestore(int pageCount) {
+    _knownPageCount = pageCount;
+    if (!_readerSetupReady || _positionApplied || _positionRestoreScheduled) {
+      return;
+    }
+    final generation = _positionGeneration;
+    final maxIndex = pageCount > 0 ? pageCount - 1 : 0;
+    final targetIndex = (_savedPosition?.pageIndex ?? 0)
+        .clamp(0, maxIndex)
+        .toInt();
+    _currentPageIndex = targetIndex;
+    _positionRestoreScheduled = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || generation != _positionGeneration) return;
+      if (_readingMode.isPaged) {
+        if (_pageController.hasClients) {
+          _pageController.jumpToPage(targetIndex);
+        }
+        _progressNotifier.value = pageCount <= 1
+            ? 0
+            : targetIndex / (pageCount - 1);
+        _finishPositionRestore(generation);
+      } else {
+        unawaited(
+          _restoreVerticalPosition(
+            generation: generation,
+            targetIndex: targetIndex,
+            scrollProgress: _savedPosition?.scrollProgress ?? 0,
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> _restoreVerticalPosition({
+    required int generation,
+    required int targetIndex,
+    required double scrollProgress,
+  }) async {
+    for (final delay in const [0, 100, 260]) {
+      if (delay > 0) await Future<void>.delayed(Duration(milliseconds: delay));
+      if (!mounted || generation != _positionGeneration) return;
+      if (!_scrollController.hasClients) continue;
+
+      final targetContext = _scrollPageKeys[targetIndex]?.currentContext;
+      if (targetContext == null) {
+        final maxExtent = _scrollController.position.maxScrollExtent;
+        _scrollController.jumpTo(
+          (maxExtent * scrollProgress.clamp(0.0, 1.0)).clamp(0.0, maxExtent),
+        );
+      } else {
+        if (!targetContext.mounted) continue;
+        await Scrollable.ensureVisible(
+          targetContext,
+          alignment: 0,
+          duration: Duration.zero,
+        );
+      }
+      await WidgetsBinding.instance.endOfFrame;
+    }
+    _finishPositionRestore(generation);
+  }
+
+  void _finishPositionRestore(int generation) {
+    if (!mounted || generation != _positionGeneration) return;
+    _positionRestoreScheduled = false;
+    _positionApplied = true;
+    if (!_readingMode.isPaged) _updateVisibleScrollPage();
+  }
+
+  void _cancelPositionRestoreForInteraction() {
+    if (_positionApplied) return;
+    _positionGeneration++;
+    _positionRestoreScheduled = false;
+    _positionApplied = true;
+  }
+
+  void _onReadingModeSelected(ComicReadingMode mode) {
+    if (mode == _readingMode) return;
+    final chapterId = _chapter.id;
+    final position = _currentSavedPosition();
+    _progressSaveDebounce?.cancel();
+    unawaited(_writeReaderPosition(chapterId, position));
+    final preferences = _readerPreferences;
+    if (preferences != null) {
+      unawaited(preferences.writeComicReadingMode(mode).catchError((_) {}));
+    }
+
+    setState(() {
+      _readingMode = mode;
+      _readerGestureLocked = false;
+      _highResolutionPageIndexes = const {};
+      _zoomResetGeneration++;
+      _savedPosition = position;
+      _currentPageIndex = position.pageIndex;
+      _positionGeneration++;
+      _positionRestoreScheduled = false;
+      _positionApplied = false;
+    });
+    _releaseScrollHold();
+    _controlsVisibleNotifier.value = true;
+  }
+
+  void _handlePagedTapDown(TapDownDetails details) {
+    _pendingPagedTapPosition = details.localPosition;
+  }
+
+  void _handlePagedTap(Size viewportSize) {
+    if (_readerGestureLocked || !_positionApplied) return;
+    final position = _pendingPagedTapPosition;
+    if (position == null || viewportSize.width <= 0) return;
+    final horizontalFraction = position.dx / viewportSize.width;
+    if (horizontalFraction >= 0.36 && horizontalFraction <= 0.64) {
+      _controlsVisibleNotifier.value = !_controlsVisibleNotifier.value;
+      return;
+    }
+    final tappedLeadingSide = horizontalFraction < 0.5;
+    final shouldAdvance = _readingMode.isRightToLeft
+        ? tappedLeadingSide
+        : !tappedLeadingSide;
+    if (shouldAdvance) {
+      _goToNextReaderPage();
+    } else {
+      _goToPreviousReaderPage();
+    }
+  }
+
+  void _goToNextReaderPage() {
+    if (_currentPageIndex < _knownPageCount - 1) {
+      _pageController.nextPage(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    } else if (_currentIndex < widget.chapters.length - 1) {
+      _openChapter(_currentIndex + 1);
+    } else {
+      _controlsVisibleNotifier.value = true;
+    }
+  }
+
+  void _goToPreviousReaderPage() {
+    if (_currentPageIndex > 0) {
+      _pageController.previousPage(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    } else if (_currentIndex > 0) {
+      _openChapter(_currentIndex - 1);
+    } else {
+      _controlsVisibleNotifier.value = true;
+    }
+  }
+
+  void _handlePagedPageChanged(int pageIndex, List<String> imageUrls) {
+    final maxIndex = imageUrls.isEmpty ? 0 : imageUrls.length - 1;
+    final safeIndex = pageIndex.clamp(0, maxIndex).toInt();
+    if (safeIndex != _currentPageIndex) {
+      setState(() {
+        _currentPageIndex = safeIndex;
+        _highResolutionPageIndexes = const {};
+        _zoomResetGeneration++;
+      });
+    }
+    _progressNotifier.value = imageUrls.length <= 1
+        ? 0
+        : safeIndex / (imageUrls.length - 1);
+    _preloadNearbyPages(imageUrls, safeIndex);
+    if (_positionApplied) {
+      _controlsVisibleNotifier.value = false;
+      _scheduleProgressSave();
+    }
   }
 
   void _openChapter(int index) {
     if (index < 0 || index >= widget.chapters.length) return;
+    final previousChapterId = _chapter.id;
+    final previousPosition = _currentSavedPosition();
+    _progressSaveDebounce?.cancel();
+    unawaited(_writeReaderPosition(previousChapterId, previousPosition));
     setState(() {
       _readerGestureLocked = false;
       _highResolutionPageIndexes = const {};
@@ -570,6 +898,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _currentIndex = index;
       _activeImagePreloads.clear();
       _pageAspectRatios.clear();
+      _scrollPageKeys.clear();
       _preloadAnchorPageIndex = -1;
       _preloadGeneration++;
       _preloadWindowGeneration++;
@@ -577,6 +906,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _futureChapter = _loadChapterDetail();
       _futureTranslations = _loadChapterTranslations();
       _lastOffset = 0;
+      _currentPageIndex = 0;
+      _knownPageCount = 0;
+      _savedPosition = null;
+      _readerSetupReady = false;
+      _positionApplied = false;
+      _positionRestoreScheduled = false;
+      _positionGeneration++;
     });
     _releaseScrollHold();
     _controlsVisibleNotifier.value = true;
@@ -584,6 +920,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(0);
     }
+    if (_pageController.hasClients) {
+      _pageController.jumpToPage(0);
+    }
+    unawaited(_restoreReaderState(restoreMode: false));
   }
 
   Future<ChapterDetail> _loadChapterDetail() async {
@@ -639,7 +979,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   void _handleHighResolutionChanged(bool enabled, List<String> imageUrls) {
     final nextIndexes = enabled
-        ? _visiblePageIndexes(imageUrls)
+        ? _readingMode.isPaged
+              ? <int>{_currentPageIndex}
+              : _visiblePageIndexes(imageUrls)
         : const <int>{};
     if (_highResolutionPageIndexes.length == nextIndexes.length &&
         _highResolutionPageIndexes.containsAll(nextIndexes)) {
@@ -796,7 +1138,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _selectedLanguage = lang;
     });
     _releaseScrollHold();
-    widget.preferences?.writePreferredReadingLanguage(lang).catchError((_) {});
+    _effectivePreferences
+        .writePreferredReadingLanguage(lang)
+        .catchError((_) {});
   }
 
   /// Mở BottomSheet chọn ngôn ngữ đọc — đẹp hơn popup menu.
@@ -921,6 +1265,19 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<void> _backToTop() async {
+    if (_readingMode.isPaged) {
+      if (_readerGestureLocked) {
+        _resetReaderZoom();
+        await Future<void>.delayed(const Duration(milliseconds: 230));
+      }
+      if (!mounted || !_pageController.hasClients) return;
+      await _pageController.animateToPage(
+        0,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOut,
+      );
+      return;
+    }
     if (!_scrollController.hasClients) return;
     if (_readerGestureLocked) {
       _resetReaderZoom();
@@ -932,6 +1289,194 @@ class _ReaderScreenState extends State<ReaderScreen> {
       duration: const Duration(milliseconds: 280),
       curve: Curves.easeOut,
     );
+  }
+
+  Widget _buildReaderPages({
+    required ChapterDetail chapter,
+    required ChapterTranslation? activeTranslation,
+    required Color placeholderColor,
+  }) {
+    _schedulePositionRestore(chapter.images.length);
+    return _readingMode.isPaged
+        ? _buildPagedReader(
+            chapter: chapter,
+            activeTranslation: activeTranslation,
+            placeholderColor: placeholderColor,
+          )
+        : _buildContinuousReader(
+            chapter: chapter,
+            activeTranslation: activeTranslation,
+            placeholderColor: placeholderColor,
+          );
+  }
+
+  Widget _buildContinuousReader({
+    required ChapterDetail chapter,
+    required ChapterTranslation? activeTranslation,
+    required Color placeholderColor,
+  }) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 680),
+        child: ReaderZoomSurface(
+          key: ValueKey(
+            'reader-continuous-zoom-${chapter.id}-${_selectedLanguage ?? 'original'}',
+          ),
+          resetGeneration: _zoomResetGeneration,
+          onScrollLockChanged: _handleReaderZoomLock,
+          onHighResolutionChanged: (enabled) =>
+              _handleHighResolutionChanged(enabled, chapter.images),
+          child: Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (_) => _cancelPositionRestoreForInteraction(),
+            child: ListView.builder(
+              key: ValueKey(
+                'reader-scroll-${chapter.id}-${_selectedLanguage ?? 'original'}',
+              ),
+              controller: _scrollController,
+              physics: _readerGestureLocked
+                  ? const NeverScrollableScrollPhysics()
+                  : null,
+              scrollCacheExtent: const ScrollCacheExtent.viewport(2),
+              padding: const EdgeInsets.only(top: 68, bottom: 100),
+              itemCount: chapter.images.length + 1,
+              itemBuilder: (context, index) {
+                if (index == chapter.images.length) {
+                  return IgnorePointer(
+                    ignoring: _readerGestureLocked,
+                    child: AnimatedOpacity(
+                      opacity: _readerGestureLocked ? 0 : 1,
+                      duration: const Duration(milliseconds: 120),
+                      child: _ReaderEnd(
+                        hasPrevious: _currentIndex > 0,
+                        hasNext: _currentIndex < widget.chapters.length - 1,
+                        onPrevious: () => _openChapter(_currentIndex - 1),
+                        onNext: () => _openChapter(_currentIndex + 1),
+                        onBackToTop: _backToTop,
+                        onComments: _showChapterComments,
+                      ),
+                    ),
+                  );
+                }
+                final imageUrl = chapter.images[index];
+                final bubbles =
+                    activeTranslation?.bubblesForPage(index + 1) ??
+                    const <BubbleSelection>[];
+                _preloadNearbyPages(chapter.images, index);
+                return KeyedSubtree(
+                  key: _scrollPageKeys.putIfAbsent(
+                    index,
+                    () => GlobalKey(debugLabel: 'reader-scroll-page-$index'),
+                  ),
+                  child: _buildReaderPageImage(
+                    imageUrl: imageUrl,
+                    bubbles: bubbles,
+                    pageIndex: index,
+                    placeholderColor: placeholderColor,
+                    fitWithinViewport: false,
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPagedReader({
+    required ChapterDetail chapter,
+    required ChapterTranslation? activeTranslation,
+    required Color placeholderColor,
+  }) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 680),
+        child: ReaderZoomSurface(
+          key: ValueKey(
+            'reader-paged-zoom-${chapter.id}-${_selectedLanguage ?? 'original'}-${_readingMode.storageValue}',
+          ),
+          resetGeneration: _zoomResetGeneration,
+          onScrollLockChanged: _handleReaderZoomLock,
+          onHighResolutionChanged: (enabled) =>
+              _handleHighResolutionChanged(enabled, chapter.images),
+          child: LayoutBuilder(
+            builder: (context, constraints) => GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: _handlePagedTapDown,
+              onTap: () => _handlePagedTap(constraints.biggest),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 68, bottom: 116),
+                child: PageView.builder(
+                  key: ValueKey(
+                    'reader-paged-${chapter.id}-${_readingMode.storageValue}',
+                  ),
+                  controller: _pageController,
+                  reverse: _readingMode.isRightToLeft,
+                  physics: _readerGestureLocked
+                      ? const NeverScrollableScrollPhysics()
+                      : const PageScrollPhysics(),
+                  allowImplicitScrolling: true,
+                  itemCount: chapter.images.length,
+                  onPageChanged: (index) =>
+                      _handlePagedPageChanged(index, chapter.images),
+                  itemBuilder: (context, index) {
+                    final imageUrl = chapter.images[index];
+                    final bubbles =
+                        activeTranslation?.bubblesForPage(index + 1) ??
+                        const <BubbleSelection>[];
+                    _preloadNearbyPages(chapter.images, index);
+                    return RepaintBoundary(
+                      key: ValueKey('reader-paged-page-$index'),
+                      child: _buildReaderPageImage(
+                        imageUrl: imageUrl,
+                        bubbles: bubbles,
+                        pageIndex: index,
+                        placeholderColor: placeholderColor,
+                        fitWithinViewport: true,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReaderPageImage({
+    required String imageUrl,
+    required List<BubbleSelection> bubbles,
+    required int pageIndex,
+    required Color placeholderColor,
+    required bool fitWithinViewport,
+  }) {
+    return _BubbleOverlayImage(
+      key: ValueKey('$imageUrl-$fitWithinViewport'),
+      imageUrl: imageUrl,
+      bubbles: bubbles,
+      initialAspectRatio: _pageAspectRatios[imageUrl],
+      useHighResolution: _highResolutionPageIndexes.contains(pageIndex),
+      onAspectRatioResolved: (ratio) {
+        _pageAspectRatios[imageUrl] = ratio;
+      },
+      placeholderColor: placeholderColor,
+      errorLabel: context.tr(
+        'Cannot load page {page}',
+        values: {'page': pageIndex + 1},
+      ),
+      offlineDownloads: widget.offlineDownloads,
+      allowDiskCache: !_chapter.isPremium,
+      fitWithinViewport: fitWithinViewport,
+    );
+  }
+
+  void _closeReader() {
+    _progressSaveDebounce?.cancel();
+    unawaited(_persistCurrentPosition());
+    Navigator.pop(context);
   }
 
   @override
@@ -946,7 +1491,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
     return PopScope(
       canPop: !_readerGestureLocked,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _readerGestureLocked) _resetReaderZoom();
+        if (didPop) {
+          _progressSaveDebounce?.cancel();
+          unawaited(_persistCurrentPosition());
+        } else if (_readerGestureLocked) {
+          _resetReaderZoom();
+        }
       },
       child: AnnotatedRegion<SystemUiOverlayStyle>(
         value: overlayStyle.copyWith(
@@ -957,8 +1507,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
           backgroundColor: tokens.readerBackground,
           body: GestureDetector(
             behavior: HitTestBehavior.translucent,
-            onTap: () => _controlsVisibleNotifier.value =
-                !_controlsVisibleNotifier.value,
+            onTap: _readingMode.isPaged
+                ? null
+                : () => _controlsVisibleNotifier.value =
+                      !_controlsVisibleNotifier.value,
             child: Stack(
               children: [
                 Positioned.fill(
@@ -995,6 +1547,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
                           ),
                         );
                       }
+                      if (!_readerSetupReady) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
                       return FutureBuilder<List<ChapterTranslation>>(
                         future: _futureTranslations,
                         builder: (context, translationsSnapshot) {
@@ -1010,91 +1565,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
                               }
                             }
                           }
-                          return Center(
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 680),
-                              child: ReaderZoomSurface(
-                                key: ValueKey(
-                                  'reader-continuous-zoom-${chapter.id}-${_selectedLanguage ?? 'original'}',
-                                ),
-                                resetGeneration: _zoomResetGeneration,
-                                onScrollLockChanged: _handleReaderZoomLock,
-                                onHighResolutionChanged: (enabled) =>
-                                    _handleHighResolutionChanged(
-                                      enabled,
-                                      chapter.images,
-                                    ),
-                                child: ListView.builder(
-                                  key: ValueKey(
-                                    '${chapter.id}-${_selectedLanguage ?? 'original'}',
-                                  ),
-                                  controller: _scrollController,
-                                  physics: _readerGestureLocked
-                                      ? const NeverScrollableScrollPhysics()
-                                      : null,
-                                  scrollCacheExtent:
-                                      const ScrollCacheExtent.viewport(2),
-                                  padding: const EdgeInsets.only(
-                                    top: 68,
-                                    bottom: 100,
-                                  ),
-                                  itemCount: chapter.images.length + 1,
-                                  itemBuilder: (context, index) {
-                                    if (index == chapter.images.length) {
-                                      return IgnorePointer(
-                                        ignoring: _readerGestureLocked,
-                                        child: AnimatedOpacity(
-                                          opacity: _readerGestureLocked ? 0 : 1,
-                                          duration: const Duration(
-                                            milliseconds: 120,
-                                          ),
-                                          child: _ReaderEnd(
-                                            hasPrevious: _currentIndex > 0,
-                                            hasNext:
-                                                _currentIndex <
-                                                widget.chapters.length - 1,
-                                            onPrevious: () =>
-                                                _openChapter(_currentIndex - 1),
-                                            onNext: () =>
-                                                _openChapter(_currentIndex + 1),
-                                            onBackToTop: _backToTop,
-                                            onComments: _showChapterComments,
-                                          ),
-                                        ),
-                                      );
-                                    }
-                                    final bubbles =
-                                        activeTranslation?.bubblesForPage(
-                                          index + 1,
-                                        ) ??
-                                        const <BubbleSelection>[];
-                                    final imageUrl = chapter.images[index];
-                                    _preloadNearbyPages(chapter.images, index);
-                                    return _BubbleOverlayImage(
-                                      key: ValueKey(imageUrl),
-                                      imageUrl: imageUrl,
-                                      bubbles: bubbles,
-                                      initialAspectRatio:
-                                          _pageAspectRatios[imageUrl],
-                                      useHighResolution:
-                                          _highResolutionPageIndexes.contains(
-                                            index,
-                                          ),
-                                      onAspectRatioResolved: (ratio) {
-                                        _pageAspectRatios[imageUrl] = ratio;
-                                      },
-                                      placeholderColor: tokens.surfaceSubtle,
-                                      errorLabel: context.tr(
-                                        'Cannot load page {page}',
-                                        values: {'page': index + 1},
-                                      ),
-                                      offlineDownloads: widget.offlineDownloads,
-                                      allowDiskCache: !_chapter.isPremium,
-                                    );
-                                  },
-                                ),
-                              ),
-                            ),
+                          return _buildReaderPages(
+                            chapter: chapter,
+                            activeTranslation: activeTranslation,
+                            placeholderColor: tokens.surfaceSubtle,
                           );
                         },
                       );
@@ -1119,13 +1593,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
                       chapter: _chapter,
                       chapters: widget.chapters,
                       currentIndex: _currentIndex,
-                      onBack: () => Navigator.pop(context),
+                      onBack: _closeReader,
                       onChapterSelected: _openChapter,
                       translationsFuture: _futureTranslations,
                       selectedLanguage: _selectedLanguage,
                       onLanguageSelected: _onLanguageSelected,
                       onShowLanguageSheet: _showLanguageSheet,
                       onFitToWidth: _resetReaderZoom,
+                      readingMode: _readingMode,
+                      onReadingModeSelected: _onReadingModeSelected,
                     ),
                     builder: (context, visible, child) => AnimatedSlide(
                       offset: visible ? Offset.zero : const Offset(0, -1.2),
@@ -1149,6 +1625,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
                         valueListenable: _progressNotifier,
                         builder: (context, progress, _) => _ReaderBottomBar(
                           progress: progress,
+                          isPaged: _readingMode.isPaged,
+                          pageIndex: _currentPageIndex,
+                          pageCount: _knownPageCount,
                           hasPrevious: _currentIndex > 0,
                           hasNext: _currentIndex < widget.chapters.length - 1,
                           onPrevious: () => _openChapter(_currentIndex - 1),
@@ -1334,6 +1813,8 @@ class _ReaderTopBar extends StatelessWidget {
     required this.onLanguageSelected,
     required this.onShowLanguageSheet,
     required this.onFitToWidth,
+    required this.readingMode,
+    required this.onReadingModeSelected,
   });
 
   final String comicTitle;
@@ -1347,6 +1828,8 @@ class _ReaderTopBar extends StatelessWidget {
   final ValueChanged<String?> onLanguageSelected;
   final ValueChanged<List<ChapterTranslation>> onShowLanguageSheet;
   final VoidCallback onFitToWidth;
+  final ComicReadingMode readingMode;
+  final ValueChanged<ComicReadingMode> onReadingModeSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -1479,20 +1962,81 @@ class _ReaderTopBar extends StatelessWidget {
                             onShowLanguageSheet(translations);
                           } else if (value == 'fit') {
                             onFitToWidth();
+                          } else if (value == 'mode_vertical') {
+                            onReadingModeSelected(
+                              ComicReadingMode.verticalScroll,
+                            );
+                          } else if (value == 'mode_ltr') {
+                            onReadingModeSelected(
+                              ComicReadingMode.pagedLeftToRight,
+                            );
+                          } else if (value == 'mode_rtl') {
+                            onReadingModeSelected(
+                              ComicReadingMode.pagedRightToLeft,
+                            );
                           }
                         },
                         itemBuilder: (_) => [
                           PopupMenuItem(
-                            value: 'vertical',
-                            enabled: false,
+                            value: 'mode_vertical',
                             child: Row(
                               children: [
-                                const Icon(Icons.check_rounded, size: 18),
+                                Icon(
+                                  readingMode == ComicReadingMode.verticalScroll
+                                      ? Icons.check_rounded
+                                      : Icons.view_stream_outlined,
+                                  size: 18,
+                                ),
                                 const SizedBox(width: 8),
                                 Text(context.tr('Vertical scroll')),
                               ],
                             ),
                           ),
+                          PopupMenuItem(
+                            value: 'mode_ltr',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  readingMode ==
+                                          ComicReadingMode.pagedLeftToRight
+                                      ? Icons.check_rounded
+                                      : Icons.swipe_left_rounded,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    context.tr('Paged, next on right'),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'mode_rtl',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  readingMode ==
+                                          ComicReadingMode.pagedRightToLeft
+                                      ? Icons.check_rounded
+                                      : Icons.swipe_right_rounded,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    context.tr('Paged, next on left'),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuDivider(),
                           PopupMenuItem(
                             value: 'fit',
                             child: Row(
@@ -1547,6 +2091,9 @@ class _ReaderTopBar extends StatelessWidget {
 class _ReaderBottomBar extends StatelessWidget {
   const _ReaderBottomBar({
     required this.progress,
+    required this.isPaged,
+    required this.pageIndex,
+    required this.pageCount,
     required this.hasPrevious,
     required this.hasNext,
     required this.onPrevious,
@@ -1556,6 +2103,9 @@ class _ReaderBottomBar extends StatelessWidget {
   });
 
   final double progress;
+  final bool isPaged;
+  final int pageIndex;
+  final int pageCount;
   final bool hasPrevious;
   final bool hasNext;
   final VoidCallback onPrevious;
@@ -1573,8 +2123,22 @@ class _ReaderBottomBar extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             LinearProgressIndicator(value: progress),
+            if (isPaged)
+              Padding(
+                padding: const EdgeInsets.only(top: 7),
+                child: Text(
+                  context.tr(
+                    'Page {current} of {total}',
+                    values: {
+                      'current': pageCount == 0 ? 0 : pageIndex + 1,
+                      'total': pageCount,
+                    },
+                  ),
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
+              ),
             SizedBox(
-              height: 88,
+              height: isPaged ? 76 : 88,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
@@ -1732,6 +2296,7 @@ class _BubbleOverlayImage extends StatefulWidget {
     required this.errorLabel,
     this.offlineDownloads,
     this.allowDiskCache = true,
+    this.fitWithinViewport = false,
   });
 
   final String imageUrl;
@@ -1743,6 +2308,7 @@ class _BubbleOverlayImage extends StatefulWidget {
   final String errorLabel;
   final OfflineDownloadService? offlineDownloads;
   final bool allowDiskCache;
+  final bool fitWithinViewport;
 
   @override
   State<_BubbleOverlayImage> createState() => _BubbleOverlayImageState();
@@ -2029,8 +2595,8 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
   @override
   Widget build(BuildContext context) {
     if (_hasError) {
-      return AspectRatio(
-        aspectRatio: 0.68,
+      return _layoutPage(
+        aspectRatio: _aspectRatio ?? 0.68,
         child: ColoredBox(
           color: widget.placeholderColor,
           child: Center(child: Text(widget.errorLabel)),
@@ -2038,7 +2604,7 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
       );
     }
     if (_aspectRatio == null) {
-      return AspectRatio(
+      return _layoutPage(
         aspectRatio: 0.68,
         child: ColoredBox(
           color: widget.placeholderColor,
@@ -2046,7 +2612,7 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
         ),
       );
     }
-    return AspectRatio(
+    return _layoutPage(
       aspectRatio: _aspectRatio!,
       child: Semantics(
         label: context.tr('Comic page. Pinch or double tap to zoom.'),
@@ -2099,6 +2665,31 @@ class _BubbleOverlayImageState extends State<_BubbleOverlayImage> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _layoutPage({required double aspectRatio, required Widget child}) {
+    if (!widget.fitWithinViewport) {
+      return AspectRatio(aspectRatio: aspectRatio, child: child);
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : 680.0;
+        final maxHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : maxWidth / aspectRatio;
+        var width = maxWidth;
+        var height = width / aspectRatio;
+        if (height > maxHeight) {
+          height = maxHeight;
+          width = height * aspectRatio;
+        }
+        return Center(
+          child: SizedBox(width: width, height: height, child: child),
+        );
+      },
     );
   }
 
