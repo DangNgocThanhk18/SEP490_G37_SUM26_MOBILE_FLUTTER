@@ -201,7 +201,9 @@ class OfflineDownloadService extends ChangeNotifier {
   final Map<String, Future<Uint8List>> _activePageReads = {};
   final Map<Uint8List, int> _pageByteLeases = Map.identity();
   final Set<Uint8List> _evictedPageBytes = Set.identity();
-  static const int _maxCachedPagesInMemory = 6;
+  static const int _maxCachedPagesInMemory = 4;
+  static const int _maxCachedPageBytesInMemory = 32 * 1024 * 1024;
+  int _cachedPageBytes = 0;
 
   String? get accountScope => _accountScope;
   int get decryptionEpoch => _decryptionEpoch;
@@ -248,6 +250,7 @@ class OfflineDownloadService extends ChangeNotifier {
       _evictPageBytes(bytes);
     }
     _pageBytesCache.clear();
+    _cachedPageBytes = 0;
     _activePageReads.clear();
     _decryptionEpoch++;
     notifyListeners();
@@ -936,14 +939,21 @@ class OfflineDownloadService extends ChangeNotifier {
 
   void _rememberPage(String offlineUri, Uint8List bytes) {
     final previous = _pageBytesCache.remove(offlineUri);
-    if (previous != null && !identical(previous, bytes)) {
-      _evictPageBytes(previous);
+    if (previous != null) {
+      _cachedPageBytes -= previous.length;
+      if (!identical(previous, bytes)) _evictPageBytes(previous);
     }
-    while (_pageBytesCache.length >= _maxCachedPagesInMemory) {
+    while (_pageBytesCache.isNotEmpty &&
+        (_pageBytesCache.length >= _maxCachedPagesInMemory ||
+            _cachedPageBytes + bytes.length > _maxCachedPageBytesInMemory)) {
       final removed = _pageBytesCache.remove(_pageBytesCache.keys.first);
-      if (removed != null) _evictPageBytes(removed);
+      if (removed != null) {
+        _cachedPageBytes -= removed.length;
+        _evictPageBytes(removed);
+      }
     }
     _pageBytesCache[offlineUri] = bytes;
+    _cachedPageBytes += bytes.length;
   }
 
   void releasePageBytes(Uint8List bytes) {

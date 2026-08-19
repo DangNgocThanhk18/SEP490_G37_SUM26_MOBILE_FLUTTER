@@ -295,6 +295,7 @@ class _FakeApiClient extends ApiClient {
 
   @override
   Future<ComicCursorPage> exploreComics({
+    String? search,
     String? cursor,
     String? referenceId,
     Iterable<String> genreIds = const [],
@@ -406,6 +407,7 @@ class _CountingShellApiClient extends _FakeApiClient {
 
   @override
   Future<ComicCursorPage> exploreComics({
+    String? search,
     String? cursor,
     String? referenceId,
     Iterable<String> genreIds = const [],

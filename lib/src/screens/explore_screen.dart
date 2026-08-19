@@ -86,6 +86,7 @@ class _ExploreScreenState extends State<ExploreScreen>
     });
     try {
       final page = await widget.apiClient.exploreComics(
+        search: _query,
         genreIds: _selectedGenreIds,
         publicationStatus: _status,
         sortBy: _sort,
@@ -115,6 +116,7 @@ class _ExploreScreenState extends State<ExploreScreen>
     setState(() => _loadingMore = true);
     try {
       final page = await widget.apiClient.exploreComics(
+        search: _query,
         cursor: _nextCursor,
         referenceId: _nextReferenceId,
         genreIds: _selectedGenreIds,
@@ -147,21 +149,16 @@ class _ExploreScreenState extends State<ExploreScreen>
 
   void _onSearchChanged(String value) {
     _searchDebounce?.cancel();
-    _searchDebounce = Timer(const Duration(milliseconds: 180), () {
-      if (mounted) setState(() => _query = value.trim().toLowerCase());
+    _searchDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (!mounted) return;
+      final nextQuery = value.trim();
+      if (nextQuery == _query) return;
+      setState(() => _query = nextQuery);
+      unawaited(_reload());
     });
   }
 
-  List<Comic> get _visibleComics {
-    if (_query.isEmpty) return _comics;
-    return _comics
-        .where((comic) {
-          return comic.title.toLowerCase().contains(_query) ||
-              (comic.authorName?.toLowerCase().contains(_query) ?? false) ||
-              comic.genres.any((genre) => genre.toLowerCase().contains(_query));
-        })
-        .toList(growable: false);
-  }
+  List<Comic> get _visibleComics => _comics;
 
   Future<void> _showFilters() async {
     var selectedGenres = Set<String>.from(_selectedGenreIds);
@@ -353,6 +350,7 @@ class _ExploreScreenState extends State<ExploreScreen>
                                   onPressed: () {
                                     _searchController.clear();
                                     setState(() => _query = '');
+                                    unawaited(_reload());
                                   },
                                   icon: const Icon(Icons.close_rounded),
                                 ),

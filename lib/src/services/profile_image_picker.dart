@@ -55,6 +55,9 @@ class DeviceProfileImagePicker implements ProfileImagePicker {
       file ??= await picker.pickImage(
         source: ImageSource.gallery,
         requestFullMetadata: false,
+        maxWidth: kind == ProfileImageKind.avatar ? 1024 : 1920,
+        maxHeight: kind == ProfileImageKind.avatar ? 1024 : 1080,
+        imageQuality: 85,
       );
       if (file == null) return null;
 

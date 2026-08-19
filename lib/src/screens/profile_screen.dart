@@ -119,12 +119,11 @@ class ProfileScreen extends StatelessWidget {
                       ),
                       onPressed: () => Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) =>
-                              PremiumScreen(
-                                apiClient: apiClient,
-                                user: user!,
-                                onUserChanged: onUserChanged,
-                              ),
+                          builder: (_) => PremiumScreen(
+                            apiClient: apiClient,
+                            user: user!,
+                            onUserChanged: onUserChanged,
+                          ),
                         ),
                       ),
                     ),
@@ -840,12 +839,16 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
         ? Image.memory(
             selectedBytes,
             fit: BoxFit.cover,
+            cacheWidth: 256,
+            cacheHeight: 256,
             errorBuilder: (_, _, _) => _avatarFallback(context),
           )
         : _avatarUrl?.trim().isNotEmpty == true
         ? Image.network(
             _avatarUrl!,
             fit: BoxFit.cover,
+            cacheWidth: 256,
+            cacheHeight: 256,
             errorBuilder: (_, _, _) => _avatarFallback(context),
           )
         : _avatarFallback(context);
@@ -918,12 +921,14 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
         ? Image.memory(
             selectedBytes,
             fit: BoxFit.cover,
+            cacheWidth: 1200,
             errorBuilder: (_, _, _) => fallback,
           )
         : _backgroundImageUrl?.trim().isNotEmpty == true
         ? Image.network(
             _backgroundImageUrl!,
             fit: BoxFit.cover,
+            cacheWidth: 1200,
             errorBuilder: (_, _, _) => fallback,
           )
         : fallback;

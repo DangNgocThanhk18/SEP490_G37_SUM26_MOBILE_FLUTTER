@@ -36,8 +36,9 @@ class FirebasePushNotifications implements PushNotificationCoordinator {
   ApiClient? _authenticatedApiClient;
   AppNotification? _pendingOpenedNotification;
   String? _currentToken;
-  bool _initialized = false;
+  Future<bool>? _initializationFuture;
   bool _available = false;
+  bool _disposed = false;
   int _registrationRetryAttempt = 0;
 
   static const int _maximumRegistrationRetries = 6;
@@ -50,12 +51,24 @@ class FirebasePushNotifications implements PushNotificationCoordinator {
   Stream<AppNotification> get openedNotifications => _openedController.stream;
 
   @override
-  Future<bool> initialize() async {
-    if (_initialized) return _available;
-    _initialized = true;
+  Future<bool> initialize() {
+    if (_disposed || kIsWeb) return Future.value(false);
+    if (_available) return Future.value(true);
+    final pending = _initializationFuture;
+    if (pending != null) return pending;
+    final operation = _initializeOnce();
+    _initializationFuture = operation;
+    operation.whenComplete(() {
+      if (identical(_initializationFuture, operation)) {
+        _initializationFuture = null;
+      }
+    }).ignore();
+    return operation;
+  }
+
+  Future<bool> _initializeOnce() async {
     // ComiVerse Web is the React application. This coordinator intentionally
     // owns only the Android/iOS mobile push lifecycle.
-    if (kIsWeb) return false;
     try {
       if (_injectedMessaging == null && Firebase.apps.isEmpty) {
         final options = FirebaseRuntimeOptions.currentPlatform;
@@ -69,6 +82,8 @@ class FirebasePushNotifications implements PushNotificationCoordinator {
         badge: true,
         sound: false,
       );
+      await _cancelMessageSubscriptions();
+      if (_disposed) return false;
       _foregroundSubscription = FirebaseMessaging.onMessage.listen((message) {
         _foregroundController.add(notificationFromRemoteMessage(message));
       });
@@ -94,14 +109,31 @@ class FirebasePushNotifications implements PushNotificationCoordinator {
       // to block login or reading.
       debugPrint('Push notifications unavailable: $error');
       _available = false;
+      _messaging = null;
+      await _cancelMessageSubscriptions();
     }
     return _available;
+  }
+
+  Future<void> _cancelMessageSubscriptions() async {
+    await Future.wait<void>([
+      if (_foregroundSubscription != null) _foregroundSubscription!.cancel(),
+      if (_openedSubscription != null) _openedSubscription!.cancel(),
+      if (_tokenSubscription != null) _tokenSubscription!.cancel(),
+    ]);
+    _foregroundSubscription = null;
+    _openedSubscription = null;
+    _tokenSubscription = null;
   }
 
   @override
   Future<void> syncAuthenticatedUser(ApiClient apiClient) async {
     _authenticatedApiClient = apiClient;
-    if (!apiClient.hasToken || !await initialize()) return;
+    if (!apiClient.hasToken) return;
+    if (!await initialize()) {
+      _scheduleRegistrationRetry(apiClient);
+      return;
+    }
     try {
       final permission = await _messaging!.requestPermission(
         alert: true,
@@ -158,7 +190,7 @@ class FirebasePushNotifications implements PushNotificationCoordinator {
     _registrationRetryAttempt++;
     _registrationRetryTimer = Timer(
       Duration(seconds: delaySeconds),
-      () => unawaited(_registerCurrentDevice(apiClient)),
+      () => unawaited(syncAuthenticatedUser(apiClient)),
     );
   }
 
@@ -221,10 +253,9 @@ class FirebasePushNotifications implements PushNotificationCoordinator {
 
   @override
   void dispose() {
+    _disposed = true;
     _cancelRegistrationRetry();
-    unawaited(_foregroundSubscription?.cancel());
-    unawaited(_openedSubscription?.cancel());
-    unawaited(_tokenSubscription?.cancel());
+    unawaited(_cancelMessageSubscriptions());
     unawaited(_foregroundController.close());
     unawaited(_openedController.close());
   }

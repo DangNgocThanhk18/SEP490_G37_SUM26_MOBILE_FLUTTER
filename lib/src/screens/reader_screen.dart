@@ -4,7 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderBox, ScrollCacheExtent;
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 
 import '../l10n/app_localizations.dart';
@@ -21,9 +21,9 @@ import '../widgets/in_app_notification.dart';
 import 'premium_screen.dart';
 
 abstract final class ReaderImageLoadingPolicy {
-  static const int preloadAheadCount = 4;
-  static const int preloadBehindCount = 2;
-  static const int preloadAnchorStep = 2;
+  static const int preloadAheadCount = 2;
+  static const int preloadBehindCount = 1;
+  static const int preloadAnchorStep = 1;
 
   static List<String> urlsToPreload(List<String> urls, int pageIndex) {
     if (urls.isEmpty || pageIndex < 0 || pageIndex >= urls.length) {
@@ -500,7 +500,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   double _lastOffset = 0;
   final Set<String> _activeImagePreloads = {};
   final Map<String, double> _pageAspectRatios = {};
-  final Map<int, GlobalKey> _scrollPageKeys = {};
+  List<String> _activePageUrls = const [];
+  List<double> _verticalPageBottoms = const [];
+  double? _verticalLayoutWidth;
   Set<int> _highResolutionPageIndexes = const {};
   bool _readerGestureLocked = false;
   ScrollHoldController? _scrollHoldController;
@@ -650,24 +652,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _updateVisibleScrollPage() {
-    if (_readingMode.isPaged || !mounted || _scrollPageKeys.isEmpty) return;
-    final viewportHeight = MediaQuery.sizeOf(context).height;
-    var bestIndex = _currentPageIndex;
-    var bestVisibleHeight = -1.0;
-    for (final entry in _scrollPageKeys.entries) {
-      final renderObject = entry.value.currentContext?.findRenderObject();
-      if (renderObject is! RenderBox || !renderObject.attached) continue;
-      final top = renderObject.localToGlobal(Offset.zero).dy;
-      final bottom = top + renderObject.size.height;
-      final visibleHeight =
-          (bottom.clamp(0.0, viewportHeight) - top.clamp(0.0, viewportHeight))
-              .clamp(0.0, viewportHeight);
-      if (visibleHeight > bestVisibleHeight) {
-        bestVisibleHeight = visibleHeight;
-        bestIndex = entry.key;
-      }
+    if (_readingMode.isPaged ||
+        !mounted ||
+        !_scrollController.hasClients ||
+        _activePageUrls.isEmpty) {
+      return;
     }
-    _currentPageIndex = bestIndex;
+    final screenSize = MediaQuery.sizeOf(context);
+    final bottoms = _ensureVerticalPageBottoms(
+      _activePageUrls,
+      screenSize.width.clamp(0.0, 680.0),
+    );
+    final viewportCenter = _scrollController.offset + (screenSize.height / 2);
+    _currentPageIndex = _firstPageEndingAfter(
+      bottoms,
+      viewportCenter,
+    ).clamp(0, _activePageUrls.length - 1);
   }
 
   SavedReaderPosition _currentSavedPosition() {
@@ -738,7 +738,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
         unawaited(
           _restoreVerticalPosition(
             generation: generation,
-            targetIndex: targetIndex,
             scrollProgress: _savedPosition?.scrollProgress ?? 0,
           ),
         );
@@ -748,7 +747,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Future<void> _restoreVerticalPosition({
     required int generation,
-    required int targetIndex,
     required double scrollProgress,
   }) async {
     for (final delay in const [0, 100, 260]) {
@@ -756,20 +754,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       if (!mounted || generation != _positionGeneration) return;
       if (!_scrollController.hasClients) continue;
 
-      final targetContext = _scrollPageKeys[targetIndex]?.currentContext;
-      if (targetContext == null) {
-        final maxExtent = _scrollController.position.maxScrollExtent;
-        _scrollController.jumpTo(
-          (maxExtent * scrollProgress.clamp(0.0, 1.0)).clamp(0.0, maxExtent),
-        );
-      } else {
-        if (!targetContext.mounted) continue;
-        await Scrollable.ensureVisible(
-          targetContext,
-          alignment: 0,
-          duration: Duration.zero,
-        );
-      }
+      final maxExtent = _scrollController.position.maxScrollExtent;
+      _scrollController.jumpTo(
+        (maxExtent * scrollProgress.clamp(0.0, 1.0)).clamp(0.0, maxExtent),
+      );
       await WidgetsBinding.instance.endOfFrame;
     }
     _finishPositionRestore(generation);
@@ -898,7 +886,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _currentIndex = index;
       _activeImagePreloads.clear();
       _pageAspectRatios.clear();
-      _scrollPageKeys.clear();
+      _activePageUrls = const [];
+      _verticalPageBottoms = const [];
+      _verticalLayoutWidth = null;
       _preloadAnchorPageIndex = -1;
       _preloadGeneration++;
       _preloadWindowGeneration++;
@@ -998,19 +988,59 @@ class _ReaderScreenState extends State<ReaderScreen> {
         ? _scrollController.offset
         : 0.0;
     final viewportBottom = viewportTop + screenSize.height;
-    var pageTop = 68.0;
+    final bottoms = _ensureVerticalPageBottoms(imageUrls, pageWidth);
     final result = <int>{};
-    for (var index = 0; index < imageUrls.length; index++) {
-      final ratio = _pageAspectRatios[imageUrls[index]] ?? 0.68;
-      final pageHeight = pageWidth / ratio;
-      final pageBottom = pageTop + pageHeight;
+    var index = _firstPageEndingAfter(bottoms, viewportTop);
+    for (; index < imageUrls.length; index++) {
+      final pageTop = index == 0 ? 68.0 : bottoms[index - 1];
+      final pageBottom = bottoms[index];
       if (pageBottom >= viewportTop && pageTop <= viewportBottom) {
         result.add(index);
       }
       if (pageTop > viewportBottom) break;
-      pageTop = pageBottom;
     }
     return result;
+  }
+
+  List<double> _ensureVerticalPageBottoms(
+    List<String> imageUrls,
+    double pageWidth,
+  ) {
+    if (_verticalLayoutWidth == pageWidth &&
+        _verticalPageBottoms.length == imageUrls.length) {
+      return _verticalPageBottoms;
+    }
+    var bottom = 68.0;
+    final values = <double>[];
+    for (final imageUrl in imageUrls) {
+      final ratio = _pageAspectRatios[imageUrl] ?? 0.68;
+      bottom += pageWidth / ratio;
+      values.add(bottom);
+    }
+    _verticalLayoutWidth = pageWidth;
+    _verticalPageBottoms = values;
+    return values;
+  }
+
+  int _firstPageEndingAfter(List<double> bottoms, double offset) {
+    var low = 0;
+    var high = bottoms.length;
+    while (low < high) {
+      final middle = low + ((high - low) >> 1);
+      if (bottoms[middle] < offset) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    return low.clamp(0, bottoms.length - 1);
+  }
+
+  void _recordPageAspectRatio(String imageUrl, double ratio) {
+    final previous = _pageAspectRatios[imageUrl];
+    if (previous != null && (previous - ratio).abs() < 0.0001) return;
+    _pageAspectRatios[imageUrl] = ratio;
+    _verticalLayoutWidth = null;
   }
 
   void _resetReaderZoom() {
@@ -1296,6 +1326,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     required ChapterTranslation? activeTranslation,
     required Color placeholderColor,
   }) {
+    _activePageUrls = chapter.images;
     _schedulePositionRestore(chapter.images.length);
     return _readingMode.isPaged
         ? _buildPagedReader(
@@ -1364,10 +1395,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     const <BubbleSelection>[];
                 _preloadNearbyPages(chapter.images, index);
                 return KeyedSubtree(
-                  key: _scrollPageKeys.putIfAbsent(
-                    index,
-                    () => GlobalKey(debugLabel: 'reader-scroll-page-$index'),
-                  ),
+                  key: ValueKey('reader-scroll-page-$index'),
                   child: _buildReaderPageImage(
                     imageUrl: imageUrl,
                     bubbles: bubbles,
@@ -1460,7 +1488,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       initialAspectRatio: _pageAspectRatios[imageUrl],
       useHighResolution: _highResolutionPageIndexes.contains(pageIndex),
       onAspectRatioResolved: (ratio) {
-        _pageAspectRatios[imageUrl] = ratio;
+        _recordPageAspectRatio(imageUrl, ratio);
       },
       placeholderColor: placeholderColor,
       errorLabel: context.tr(

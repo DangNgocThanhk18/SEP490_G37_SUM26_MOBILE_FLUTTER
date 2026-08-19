@@ -4,14 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('preloads the next four comic pages without going out of range', () {
+  test('preloads the next two comic pages without going out of range', () {
     final urls = List.generate(8, (index) => 'page-${index + 1}');
 
     expect(ReaderImageLoadingPolicy.urlsToPreload(urls, 0), [
       'page-2',
       'page-3',
-      'page-4',
-      'page-5',
     ]);
     expect(ReaderImageLoadingPolicy.urlsToPreload(urls, 6), ['page-8']);
     expect(ReaderImageLoadingPolicy.urlsToPreload(urls, 7), isEmpty);
@@ -23,11 +21,11 @@ void main() {
 
     expect(
       ReaderImageLoadingPolicy.urlsAroundPage(urls, 4, movingBackwards: false),
-      ['page-6', 'page-7', 'page-8', 'page-9', 'page-4', 'page-3'],
+      ['page-6', 'page-7', 'page-4'],
     );
     expect(
       ReaderImageLoadingPolicy.urlsAroundPage(urls, 4, movingBackwards: true),
-      ['page-4', 'page-3', 'page-6', 'page-7', 'page-8', 'page-9'],
+      ['page-4', 'page-6', 'page-7'],
     );
   });
 

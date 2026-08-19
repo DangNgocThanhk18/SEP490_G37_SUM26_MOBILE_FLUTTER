@@ -98,6 +98,7 @@ class ApiClient {
   String? _token;
   String? _refreshToken;
   UserProfile? _currentUser;
+  Future<bool>? _refreshInFlight;
   String _languageCode = 'en';
   final Map<String, _CachedRead<Object>> _readCache = {};
   final Map<String, Future<Object>> _inFlightReads = {};
@@ -173,13 +174,29 @@ class ApiClient {
       _token = token;
       _refreshToken = values[1];
       final profileJson = values[2];
+      UserProfile? cachedProfile;
       if (profileJson != null && profileJson.trim().isNotEmpty) {
         final decoded = jsonDecode(profileJson);
         if (decoded is Map<String, dynamic>) {
-          _currentUser = UserProfile.fromJson(decoded);
-          return _currentUser;
+          cachedProfile = UserProfile.fromJson(decoded);
+          _currentUser = cachedProfile;
         }
       }
+
+      if (_isJwtExpired(token)) {
+        try {
+          if (!await _refreshAccessToken()) return null;
+        } on ApiException catch (error) {
+          // Preserve access to encrypted offline downloads during a temporary
+          // outage. Online requests will retry refresh when connectivity returns.
+          if (error.statusCode == null && cachedProfile != null) {
+            return cachedProfile;
+          }
+          rethrow;
+        }
+      }
+
+      if (cachedProfile != null) return cachedProfile;
 
       final user = await getMe();
       await _sessionStorage.write(_profileKey, jsonEncode(user.toJson()));
@@ -362,6 +379,32 @@ class ApiClient {
     );
   }
 
+  Future<void> requestPasswordReset(String email) async {
+    await _request(
+      'POST',
+      '/auth/forgot-password',
+      body: {'email': email.trim()},
+      authorized: false,
+    );
+  }
+
+  Future<void> resetPassword({
+    required String email,
+    required String otp,
+    required String newPassword,
+  }) async {
+    await _request(
+      'POST',
+      '/auth/reset-password',
+      body: {
+        'email': email.trim(),
+        'otp': otp.trim(),
+        'newPassword': newPassword,
+      },
+      authorized: false,
+    );
+  }
+
   Future<UserProfile> getMe() async {
     final json = await _request('GET', '/auth/me');
     final data = _unwrapData(json);
@@ -417,6 +460,18 @@ class ApiClient {
     required List<int> bytes,
     required String fileName,
     required String contentType,
+  }) => _uploadImage(
+    bytes: bytes,
+    fileName: fileName,
+    contentType: contentType,
+    retryOnUnauthorized: true,
+  );
+
+  Future<String> _uploadImage({
+    required List<int> bytes,
+    required String fileName,
+    required String contentType,
+    required bool retryOnUnauthorized,
   }) async {
     if (bytes.isEmpty) {
       throw const ApiException('Selected image is empty.');
@@ -455,6 +510,17 @@ class ApiClient {
       final decoded = text.trim().isEmpty
           ? <String, dynamic>{}
           : jsonDecode(text);
+
+      if (response.statusCode == 401 && retryOnUnauthorized) {
+        if (await _refreshAccessToken()) {
+          return _uploadImage(
+            bytes: bytes,
+            fileName: fileName,
+            contentType: contentType,
+            retryOnUnauthorized: false,
+          );
+        }
+      }
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final message = decoded is Map<String, dynamic>
@@ -522,6 +588,7 @@ class ApiClient {
       });
 
   Future<ComicCursorPage> exploreComics({
+    String? search,
     String? cursor,
     String? referenceId,
     Iterable<String> genreIds = const [],
@@ -538,6 +605,7 @@ class ApiClient {
       if (value != null) query[key] = value;
     }
 
+    include('search', _trimmedOrNull(search));
     include('cursor', _trimmedOrNull(cursor));
     include('referenceId', _trimmedOrNull(referenceId));
     include('publicationStatus', _trimmedOrNull(publicationStatus));
@@ -1188,6 +1256,18 @@ class ApiClient {
     required String chapterId,
     required String deviceKeyId,
     bool includeTranslations = true,
+  }) => _downloadOfflineChapter(
+    chapterId: chapterId,
+    deviceKeyId: deviceKeyId,
+    includeTranslations: includeTranslations,
+    retryOnUnauthorized: true,
+  );
+
+  Future<OfflinePackageResponse> _downloadOfflineChapter({
+    required String chapterId,
+    required String deviceKeyId,
+    required bool includeTranslations,
+    required bool retryOnUnauthorized,
   }) async {
     if (!hasToken) {
       throw const ApiException(
@@ -1216,6 +1296,16 @@ class ApiClient {
           .timeout(const Duration(minutes: 5));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final body = await utf8.decoder.bind(response.stream).join();
+        if (response.statusCode == 401 && retryOnUnauthorized) {
+          if (await _refreshAccessToken()) {
+            return _downloadOfflineChapter(
+              chapterId: chapterId,
+              deviceKeyId: deviceKeyId,
+              includeTranslations: includeTranslations,
+              retryOnUnauthorized: false,
+            );
+          }
+        }
         debugPrint(
           'DOWNLOAD_ERROR: HTTP ${response.statusCode}, headers=${response.headers}, body=$body',
         );
@@ -1334,6 +1424,7 @@ class ApiClient {
     String path, {
     Map<String, dynamic>? body,
     bool authorized = true,
+    bool retryOnUnauthorized = true,
   }) async {
     final uri = Uri.parse('$baseUrl$path');
 
@@ -1359,6 +1450,18 @@ class ApiClient {
       final decoded = text.trim().isEmpty
           ? <String, dynamic>{}
           : jsonDecode(text);
+
+      if (response.statusCode == 401 && authorized && retryOnUnauthorized) {
+        if (await _refreshAccessToken()) {
+          return _request(
+            method,
+            path,
+            body: body,
+            authorized: authorized,
+            retryOnUnauthorized: false,
+          );
+        }
+      }
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final message = decoded is Map<String, dynamic>
@@ -1391,6 +1494,75 @@ class ApiClient {
       throw ApiException('Request timed out while connecting to $baseUrl.');
     } on FormatException {
       throw const ApiException('Backend returned invalid JSON.');
+    }
+  }
+
+  Future<bool> _refreshAccessToken() {
+    final pending = _refreshInFlight;
+    if (pending != null) return pending;
+    final operation = _performTokenRefresh();
+    _refreshInFlight = operation;
+    operation.whenComplete(() {
+      if (identical(_refreshInFlight, operation)) _refreshInFlight = null;
+    }).ignore();
+    return operation;
+  }
+
+  Future<bool> _performTokenRefresh() async {
+    final refreshToken = _refreshToken?.trim();
+    if (refreshToken == null || refreshToken.isEmpty) {
+      await clearSession();
+      return false;
+    }
+    try {
+      final json = await _request(
+        'POST',
+        '/auth/refresh',
+        body: {'refreshToken': refreshToken},
+        authorized: false,
+        retryOnUnauthorized: false,
+      );
+      final nextAccessToken = (json['token'] ?? '').toString().trim();
+      final nextRefreshToken = (json['refreshToken'] ?? '').toString().trim();
+      if (nextAccessToken.isEmpty || nextRefreshToken.isEmpty) {
+        await clearSession();
+        return false;
+      }
+      _token = nextAccessToken;
+      _refreshToken = nextRefreshToken;
+      _clearReadCache();
+      await Future.wait([
+        _sessionStorage.write(_accessTokenKey, nextAccessToken),
+        _sessionStorage.write(_refreshTokenKey, nextRefreshToken),
+      ]);
+      return true;
+    } on ApiException catch (error) {
+      if (error.statusCode == 400 ||
+          error.statusCode == 401 ||
+          error.statusCode == 403) {
+        await clearSession();
+        return false;
+      }
+      rethrow;
+    }
+  }
+
+  bool _isJwtExpired(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return false;
+      final normalized = base64Url.normalize(parts[1]);
+      final decoded = jsonDecode(utf8.decode(base64Url.decode(normalized)));
+      if (decoded is! Map<String, dynamic>) return false;
+      final rawExpiration = decoded['exp'];
+      final expirationSeconds = rawExpiration is num
+          ? rawExpiration.toInt()
+          : int.tryParse(rawExpiration?.toString() ?? '');
+      if (expirationSeconds == null) return false;
+      return DateTime.now().toUtc().millisecondsSinceEpoch >=
+          expirationSeconds * 1000;
+    } catch (_) {
+      return false;
     }
   }
 

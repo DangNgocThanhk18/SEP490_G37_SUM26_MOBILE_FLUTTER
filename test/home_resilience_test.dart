@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:comiverse_mobile/src/models/comic.dart';
 import 'package:comiverse_mobile/src/screens/home_screen.dart';
 import 'package:comiverse_mobile/src/services/api_client.dart';
@@ -60,6 +62,35 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('renders a fast Home section before slower requests settle', (
+    tester,
+  ) async {
+    final apiClient = _ProgressiveApiClient();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: HomeScreen(
+          apiClient: apiClient,
+          onOpenExplore: () {},
+          onOpenNotifications: () {},
+          unreadCount: 0,
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Fast recommendation'), findsWidgets);
+    expect(apiClient.leaderboard.isCompleted, isFalse);
+    expect(apiClient.updated.isCompleted, isFalse);
+
+    apiClient.leaderboard.complete(const []);
+    apiClient.updated.complete(const []);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _PartiallyFailingApiClient extends ApiClient {
@@ -119,4 +150,23 @@ class _PersonalizationFailingApiClient extends ApiClient {
   Future<List<Comic>> getReadingHistory() async {
     throw const ApiException('Reading history is temporarily unavailable.');
   }
+}
+
+class _ProgressiveApiClient extends ApiClient {
+  _ProgressiveApiClient() : super(baseUrl: 'http://localhost/api');
+
+  final leaderboard = Completer<List<Comic>>();
+  final updated = Completer<List<Comic>>();
+
+  @override
+  Future<List<Comic>> getLeaderboard({String timeframe = 'all'}) =>
+      leaderboard.future;
+
+  @override
+  Future<List<Comic>> getRecentlyUpdated({int size = 10}) => updated.future;
+
+  @override
+  Future<List<Comic>> getRecommendations({int size = 10}) async => const [
+    Comic(id: 'fast-comic', title: 'Fast recommendation'),
+  ];
 }

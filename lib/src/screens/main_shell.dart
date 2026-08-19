@@ -76,6 +76,8 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _unreadCount = 0;
   int _notificationRefreshSignal = 0;
   Timer? _notificationTimer;
+  bool _unreadRequestInFlight = false;
+  bool _unreadRefreshQueued = false;
   StreamSubscription<AppNotification>? _foregroundPushSubscription;
   StreamSubscription<AppNotification>? _openedPushSubscription;
 
@@ -135,21 +137,32 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     _notificationTimer?.cancel();
     if (!widget.apiClient.hasToken) return;
     _notificationTimer = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) => _loadUnreadCount(),
+      const Duration(seconds: 60),
+      (_) => unawaited(_loadUnreadCount()),
     );
   }
 
   Future<void> _loadUnreadCount() async {
+    if (_unreadRequestInFlight) {
+      _unreadRefreshQueued = true;
+      return;
+    }
     if (!widget.apiClient.hasToken) {
       _applyUnreadCount(0);
       return;
     }
+    _unreadRequestInFlight = true;
     try {
       final count = await widget.apiClient.getUnreadNotificationCount();
       _applyUnreadCount(count);
     } catch (_) {
       // The destination remains usable and exposes its own retry state.
+    } finally {
+      _unreadRequestInFlight = false;
+      if (_unreadRefreshQueued && mounted) {
+        _unreadRefreshQueued = false;
+        unawaited(_loadUnreadCount());
+      }
     }
   }
 

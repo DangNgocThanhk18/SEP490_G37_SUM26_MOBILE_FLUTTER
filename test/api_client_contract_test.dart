@@ -64,6 +64,7 @@ void main() {
       );
 
       final page = await client.exploreComics(
+        search: 'blade',
         cursor: 'cursor-1',
         referenceId: 'comic-0',
         genreIds: const ['action-id', 'fantasy-id'],
@@ -78,6 +79,7 @@ void main() {
       expect(captured?.url.queryParameters, {
         'size': '15',
         'sortBy': 'Most Bookmarked',
+        'search': 'blade',
         'cursor': 'cursor-1',
         'referenceId': 'comic-0',
         'genres': 'action-id,fantasy-id',
@@ -332,6 +334,97 @@ void main() {
     expect(await client.getUnreadNotificationCount(), 2);
     expect(requestCount, 2);
   });
+
+  test(
+    'refreshes an expired session response and retries the request',
+    () async {
+      final storage = _MemorySessionStorage();
+      await storage.write('comiverse_access_token', 'old-access-token');
+      await storage.write('comiverse_refresh_token', 'valid-refresh-token');
+      await storage.write(
+        'comiverse_user_profile',
+        jsonEncode({
+          'userId': 'reader-1',
+          'username': 'reader',
+          'email': 'reader@comiverse.test',
+        }),
+      );
+      final requests = <http.Request>[];
+      final client = ApiClient(
+        baseUrl: 'http://localhost:8081/api',
+        sessionStorage: storage,
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          if (request.url.path == '/api/auth/refresh') {
+            expect(jsonDecode(request.body), {
+              'refreshToken': 'valid-refresh-token',
+            });
+            return http.Response(
+              jsonEncode({
+                'token': 'new-access-token',
+                'refreshToken': 'new-refresh-token',
+              }),
+              200,
+            );
+          }
+          if (request.headers['authorization'] == 'Bearer old-access-token') {
+            return http.Response(jsonEncode({'message': 'Token expired'}), 401);
+          }
+          return http.Response(jsonEncode({'success': true, 'data': 7}), 200);
+        }),
+      );
+      await client.restoreSession();
+
+      expect(await client.getUnreadNotificationCount(), 7);
+      expect(requests.map((request) => request.url.path), [
+        '/api/notifications/unread-count',
+        '/api/auth/refresh',
+        '/api/notifications/unread-count',
+      ]);
+      expect(requests.last.headers['authorization'], 'Bearer new-access-token');
+      expect(await storage.read('comiverse_access_token'), 'new-access-token');
+      expect(
+        await storage.read('comiverse_refresh_token'),
+        'new-refresh-token',
+      );
+    },
+  );
+
+  test(
+    'uses the public forgot-password and reset-password contracts',
+    () async {
+      final requests = <http.Request>[];
+      final client = ApiClient(
+        baseUrl: 'http://localhost:8081/api',
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          return http.Response(jsonEncode({'success': true}), 200);
+        }),
+      );
+
+      await client.requestPasswordReset(' reader@example.com ');
+      await client.resetPassword(
+        email: ' reader@example.com ',
+        otp: ' 123456 ',
+        newPassword: 'new-password-123',
+      );
+
+      expect(requests.map((request) => request.url.path), [
+        '/api/auth/forgot-password',
+        '/api/auth/reset-password',
+      ]);
+      expect(
+        requests.every((request) => request.headers['authorization'] == null),
+        isTrue,
+      );
+      expect(jsonDecode(requests[0].body), {'email': 'reader@example.com'});
+      expect(jsonDecode(requests[1].body), {
+        'email': 'reader@example.com',
+        'otp': '123456',
+        'newPassword': 'new-password-123',
+      });
+    },
+  );
 
   test('registers and unregisters the signed-in push installation', () async {
     final storage = _MemorySessionStorage();

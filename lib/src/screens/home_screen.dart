@@ -36,7 +36,10 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen>
     with AutomaticKeepAliveClientMixin {
-  late Future<_HomeData> _future;
+  _HomeData? _data;
+  Object? _loadError;
+  bool _loading = true;
+  int _loadGeneration = 0;
 
   @override
   bool get wantKeepAlive => true;
@@ -44,27 +47,75 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    unawaited(_load());
   }
 
-  Future<_HomeData> _load() async {
-    final results = await Future.wait<_HomeSectionResult>([
-      _capture(widget.apiClient.getLeaderboard(timeframe: 'day')),
-      _capture(widget.apiClient.getRecommendations(size: 10)),
-      _capture(widget.apiClient.getRecentlyUpdated(size: 8)),
-      if (widget.apiClient.hasToken)
-        _capture(widget.apiClient.getReadingHistory())
-      else
-        Future.value(const _HomeSectionResult(comics: [])),
-    ]);
-    final coreSections = results.take(3).toList();
-    if (coreSections.every((section) => section.error != null)) {
-      throw coreSections.first.error!;
+  Future<void> _load() async {
+    final generation = ++_loadGeneration;
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _loadError = null;
+      });
     }
-    final trending = results[0].comics;
-    final updated = results[2].comics;
-    final recommendations = results[1].comics.isNotEmpty
-        ? results[1].comics
+    final results = List<_HomeSectionResult?>.filled(4, null);
+    var settledCoreSections = 0;
+
+    void apply(int index, _HomeSectionResult result) {
+      if (!mounted || generation != _loadGeneration) return;
+      results[index] = result;
+      if (index < 3) settledCoreSections++;
+      final core = results.take(3).whereType<_HomeSectionResult>().toList();
+      final allCoreSettled = settledCoreSections == 3;
+      final allCoreFailed =
+          allCoreSettled && core.every((section) => section.error != null);
+      final hasVisibleContent = results.whereType<_HomeSectionResult>().any(
+        (section) => section.comics.isNotEmpty,
+      );
+
+      if (allCoreFailed) {
+        setState(() {
+          _loading = false;
+          if (_data == null) {
+            _loadError = core.first.error;
+          } else {
+            _data = _data!.withPartialFailure();
+          }
+        });
+        return;
+      }
+      if (!hasVisibleContent && !allCoreSettled) return;
+      setState(() {
+        _data = _composeHomeData(results);
+        _loading = false;
+        _loadError = null;
+      });
+    }
+
+    final operations = <Future<void>>[
+      _capture(
+        widget.apiClient.getLeaderboard(timeframe: 'day'),
+      ).then((result) => apply(0, result)),
+      _capture(
+        widget.apiClient.getRecommendations(size: 10),
+      ).then((result) => apply(1, result)),
+      _capture(
+        widget.apiClient.getRecentlyUpdated(size: 8),
+      ).then((result) => apply(2, result)),
+      (widget.apiClient.hasToken
+              ? _capture(widget.apiClient.getReadingHistory())
+              : Future.value(const _HomeSectionResult(comics: [])))
+          .then((result) => apply(3, result)),
+    ];
+    await Future.wait(operations);
+  }
+
+  _HomeData _composeHomeData(List<_HomeSectionResult?> results) {
+    final trending = results[0]?.comics ?? const [];
+    final updated = results[2]?.comics ?? const [];
+    final directRecommendations = results[1]?.comics ?? const [];
+    final recommendations = directRecommendations.isNotEmpty
+        ? directRecommendations
         : trending.isNotEmpty
         ? trending
         : updated;
@@ -72,11 +123,11 @@ class _HomeScreenState extends State<HomeScreen>
       trending: trending,
       recommended: recommendations,
       updated: updated,
-      history: results[3].comics,
+      history: results[3]?.comics ?? const [],
       // Recommendations already fall back to a public feed, while reading
       // history is optional. Only surface a warning when a catalog section
       // that is actually shown on Home failed to load.
-      hasPartialFailure: results[0].error != null || results[2].error != null,
+      hasPartialFailure: results[0]?.error != null || results[2]?.error != null,
     );
   }
 
@@ -90,8 +141,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _refresh() async {
     widget.apiClient.invalidateHomeCache();
-    setState(() => _future = _load());
-    await _future;
+    await _load();
   }
 
   void _openComic(Comic comic) {
@@ -166,26 +216,22 @@ class _HomeScreenState extends State<HomeScreen>
       ),
       body: RefreshIndicator(
         onRefresh: _refresh,
-        child: FutureBuilder<_HomeData>(
-          future: _future,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
+        child: Builder(
+          builder: (context) {
+            if (_loading && _data == null) {
               return const _HomeSkeleton();
             }
-            if (snapshot.hasError) {
+            if (_loadError != null && _data == null) {
               return ListView(
                 children: [
                   SizedBox(
                     height: MediaQuery.sizeOf(context).height * 0.7,
-                    child: ApiErrorState(
-                      error: snapshot.error!,
-                      onRetry: _refresh,
-                    ),
+                    child: ApiErrorState(error: _loadError!, onRetry: _refresh),
                   ),
                 ],
               );
             }
-            final data = snapshot.data!;
+            final data = _data!;
             final featured = _featuredComics(data);
             if (featured.isEmpty) {
               return ListView(
@@ -894,6 +940,14 @@ class _HomeData {
   final List<Comic> updated;
   final List<Comic> history;
   final bool hasPartialFailure;
+
+  _HomeData withPartialFailure() => _HomeData(
+    trending: trending,
+    recommended: recommended,
+    updated: updated,
+    history: history,
+    hasPartialFailure: true,
+  );
 }
 
 class _HomeSectionResult {

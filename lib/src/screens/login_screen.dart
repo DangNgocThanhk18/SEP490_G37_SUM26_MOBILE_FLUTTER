@@ -9,6 +9,7 @@ import "../services/api_client.dart";
 import "../widgets/common_widgets.dart";
 import "../widgets/comiverse_logo.dart";
 import "signup_screen.dart";
+import "forgot_password_screen.dart";
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({
@@ -328,6 +329,28 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  Future<void> _goToForgotPassword() async {
+    final email = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => ForgotPasswordScreen(apiClient: widget.apiClient),
+      ),
+    );
+    if (!mounted || email == null || email.trim().isEmpty) return;
+    setState(() {
+      _usernameController.text = email.trim();
+      _passwordController.clear();
+      _error = null;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          context.tr('Password reset successfully. You can now sign in.'),
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   // ── build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -436,6 +459,15 @@ class _LoginScreenState extends State<LoginScreen> {
                                 }
                                 return null;
                               },
+                            ),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
+                                onPressed: _isLoading
+                                    ? null
+                                    : _goToForgotPassword,
+                                child: Text(context.tr('Forgot password?')),
+                              ),
                             ),
                           ],
                         ),

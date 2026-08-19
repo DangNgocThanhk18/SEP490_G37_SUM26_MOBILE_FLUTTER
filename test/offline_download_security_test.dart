@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:cryptography/cryptography.dart';
@@ -8,7 +7,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:comiverse_mobile/src/models/offline_download.dart';
-import 'package:comiverse_mobile/src/models/chapter.dart';
 import 'package:comiverse_mobile/src/models/user_profile.dart';
 import 'package:comiverse_mobile/src/services/api_client.dart';
 import 'package:comiverse_mobile/src/services/offline_download_service.dart';

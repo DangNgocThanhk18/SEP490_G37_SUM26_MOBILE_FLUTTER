@@ -277,6 +277,27 @@ const Map<String, String> _vietnamese = {
   'New': 'Mới',
   'New chapters': 'Chương mới',
   'New password': 'Mật khẩu mới',
+  'A new reset code has been sent if this email exists.':
+      'Một mã khôi phục mới đã được gửi nếu email này tồn tại.',
+  'Confirm new password': 'Xác nhận mật khẩu mới',
+  'Create a new password': 'Tạo mật khẩu mới',
+  'Email address': 'Địa chỉ email',
+  'Enter a valid email address': 'Nhập địa chỉ email hợp lệ',
+  'Enter the 6-digit recovery code': 'Nhập mã khôi phục gồm 6 chữ số',
+  'Enter the 6-digit code from your email and choose a new password.':
+      'Nhập mã 6 chữ số trong email và chọn mật khẩu mới.',
+  'Enter your account email to receive a recovery code.':
+      'Nhập email tài khoản để nhận mã khôi phục.',
+  'Forgot password?': 'Quên mật khẩu?',
+  'If this email exists, a reset code has been sent.':
+      'Nếu email này tồn tại, mã khôi phục đã được gửi.',
+  'Password reset successfully. You can now sign in.':
+      'Đặt lại mật khẩu thành công. Bạn có thể đăng nhập ngay.',
+  'Recovery code': 'Mã khôi phục',
+  'Resend recovery code': 'Gửi lại mã khôi phục',
+  'Reset password': 'Đặt lại mật khẩu',
+  'Send recovery code': 'Gửi mã khôi phục',
+  'Show or hide password': 'Hiện hoặc ẩn mật khẩu',
   'New password must have at least 6 characters.':
       'Mật khẩu mới phải có ít nhất 6 ký tự.',
   'New Updates': 'Mới cập nhật',
