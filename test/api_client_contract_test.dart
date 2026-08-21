@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:comiverse_mobile/src/services/api_client.dart';
 import 'package:comiverse_mobile/src/services/session_storage.dart';
+import 'package:comiverse_mobile/src/models/content_comment.dart';
 import 'package:comiverse_mobile/src/models/login_device.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -37,6 +38,198 @@ void main() {
     expect(requests[1].url.queryParameters['sortBy'], 'Recently Updated');
     expect(requests[1].url.queryParameters['size'], '6');
   });
+
+  test(
+    'resolves comic UUIDs and SEO slugs through their correct APIs',
+    () async {
+      const comicId = '019f804b-18fb-7d98-8fe1-94c6c72a064a';
+      final requests = <http.Request>[];
+      final client = ApiClient(
+        baseUrl: 'http://localhost:8081/api',
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          return http.Response(
+            jsonEncode({
+              'success': true,
+              'data': {
+                'id': comicId,
+                'slug': 'solo-leveling',
+                'title': 'Solo Leveling',
+                'publicationStatus': 'ONGOING',
+              },
+            }),
+            200,
+          );
+        }),
+      );
+
+      final byUuid = await client.getComicDetail(comicId);
+      final bySlug = await client.getComicDetail('solo-leveling');
+
+      expect(requests.map((request) => request.url.path), [
+        '/api/comics/$comicId',
+        '/api/v2/comics/solo-leveling',
+      ]);
+      expect(byUuid.id, comicId);
+      expect(bySlug.id, comicId);
+      expect(bySlug.slug, 'solo-leveling');
+      expect(bySlug.status, 'ONGOING');
+    },
+  );
+
+  test(
+    'keeps the resolved backend UUID across comic interaction contracts',
+    () async {
+      const comicId = '019f804b-18fb-7d98-8fe1-94c6c72a064a';
+      const chapterId = '019f804b-18fb-7d98-8fe1-94c6c72a064b';
+      final storage = _MemorySessionStorage();
+      await storage.write('comiverse_access_token', 'reader-token');
+      await storage.write(
+        'comiverse_user_profile',
+        jsonEncode({
+          'userId': 'reader-1',
+          'username': 'reader',
+          'email': 'reader@comiverse.test',
+        }),
+      );
+      final requests = <http.Request>[];
+      final client = ApiClient(
+        baseUrl: 'http://localhost:8081/api',
+        sessionStorage: storage,
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          final path = request.url.path;
+          if (path == '/api/v2/comics/solo-leveling') {
+            return http.Response(
+              jsonEncode({
+                'success': true,
+                'data': {
+                  'id': comicId,
+                  'slug': 'solo-leveling',
+                  'title': 'Solo Leveling',
+                },
+              }),
+              200,
+            );
+          }
+          if (path == '/api/saves/my-saves') {
+            return http.Response(
+              jsonEncode({
+                'success': true,
+                'data': [
+                  {'id': comicId, 'title': 'Solo Leveling'},
+                ],
+              }),
+              200,
+            );
+          }
+          if (path == '/api/chapters/comic/$comicId') {
+            return http.Response(
+              jsonEncode({
+                'success': true,
+                'data': [
+                  {
+                    'id': chapterId,
+                    'comicId': comicId,
+                    'chapterNumber': 9,
+                    'title': 'Chapter 9',
+                  },
+                ],
+              }),
+              200,
+            );
+          }
+          if (path == '/api/comments/comics') {
+            if (request.method == 'POST') {
+              return http.Response(
+                jsonEncode({
+                  'success': true,
+                  'data': {
+                    'id': 'comment-1',
+                    'userId': 'reader-1',
+                    'userName': 'Reader',
+                    'content': 'Great comic',
+                    'comicId': comicId,
+                  },
+                }),
+                201,
+              );
+            }
+            return http.Response(
+              jsonEncode({
+                'success': true,
+                'metadata': {
+                  'page': 1,
+                  'size': 10,
+                  'totalElements': 0,
+                  'totalPages': 0,
+                },
+                'data': <Object>[],
+              }),
+              200,
+            );
+          }
+          if (path == '/api/ratings/comics/$comicId') {
+            return http.Response(
+              jsonEncode({
+                'success': true,
+                'data': {
+                  'comicId': comicId,
+                  'ratingAverage': 4.5,
+                  'ratingCount': 2,
+                  'userScore': request.method == 'POST' ? 5 : null,
+                },
+              }),
+              200,
+            );
+          }
+          return http.Response(
+            jsonEncode({'success': true, 'data': true}),
+            200,
+          );
+        }),
+      );
+      await client.restoreSession();
+
+      final comic = await client.getComicDetail('solo-leveling');
+      await client.checkSaved(comic.id);
+      await client.toggleSaved(comic.id);
+      await client.checkLiked(comic.id);
+      await client.toggleLiked(comic.id);
+      final saved = await client.getSavedComics();
+      await client.getComicRating(comic.id);
+      await client.rateComic(comic.id, 5);
+      final chapters = await client.getChapters(comic.id);
+      await client.getContentComments(
+        target: ContentCommentTarget.comic,
+        targetId: comic.id,
+      );
+      await client.createContentComment(
+        target: ContentCommentTarget.comic,
+        targetId: comic.id,
+        content: 'Great comic',
+      );
+
+      expect(saved.single.id, comicId);
+      expect(chapters.single.id, chapterId);
+      expect(requests.map((request) => request.url.path), [
+        '/api/v2/comics/solo-leveling',
+        '/api/saves/check/$comicId',
+        '/api/saves/toggle/$comicId',
+        '/api/likes/check/$comicId',
+        '/api/likes/toggle/$comicId',
+        '/api/saves/my-saves',
+        '/api/ratings/comics/$comicId',
+        '/api/ratings/comics/$comicId',
+        '/api/chapters/comic/$comicId',
+        '/api/comments/comics',
+        '/api/comments/comics',
+      ]);
+      expect(requests[9].url.queryParameters['comicId'], comicId);
+      expect(jsonDecode(requests[10].body)['comicId'], comicId);
+      expect(jsonDecode(requests[7].body), {'score': 5});
+    },
+  );
 
   test(
     'uses cursor, multi-genre, status, and web sort values for Explore',

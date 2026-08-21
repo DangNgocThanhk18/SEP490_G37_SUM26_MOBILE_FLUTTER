@@ -5,8 +5,6 @@ import 'package:flutter/semantics.dart';
 
 import '../l10n/app_localizations.dart';
 import '../models/app_notification.dart';
-import '../models/chapter.dart';
-import '../models/comic.dart';
 import '../models/notification_destination.dart';
 import '../models/user_profile.dart';
 import '../services/api_client.dart';
@@ -294,10 +292,10 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _openComic(String comicId) async {
+  Future<void> _openComic(String comicIdentifier) async {
     try {
       final comic = await _withLoading(
-        widget.apiClient.getComicDetail(comicId),
+        widget.apiClient.getComicDetail(comicIdentifier),
       );
       if (!mounted) return;
       await _push(
@@ -315,27 +313,31 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _openChapter(String comicId, String chapterId) async {
+  Future<void> _openChapter(
+    String comicIdentifier,
+    String chapterIdentifier,
+  ) async {
     try {
-      final values = await _withLoading(
-        Future.wait([
-          widget.apiClient.getComicDetail(comicId),
-          widget.apiClient.getChapters(comicId),
-        ]),
+      final destination = await _withLoading(
+        (() async {
+          final comic = await widget.apiClient.getComicDetail(comicIdentifier);
+          final chapters = await widget.apiClient.getChapters(comic.id);
+          return (comic: comic, chapters: chapters);
+        })(),
       );
       if (!mounted) return;
-      final comic = values[0] as Comic;
-      final chapters = values[1] as List<ChapterLite>;
-      final index = chapters.indexWhere((chapter) => chapter.id == chapterId);
+      final index = destination.chapters.indexWhere(
+        (chapter) => chapter.matchesRouteIdentifier(chapterIdentifier),
+      );
       if (index < 0) {
         throw ApiException(context.tr('This chapter is no longer available.'));
       }
       await _push(
         ReaderScreen(
           apiClient: widget.apiClient,
-          chapters: chapters,
+          chapters: destination.chapters,
           initialIndex: index,
-          comicTitle: comic.title,
+          comicTitle: destination.comic.title,
           viewerIdentifier: _readerViewerIdentifier,
           offlineDownloads: widget.offlineDownloads,
         ),

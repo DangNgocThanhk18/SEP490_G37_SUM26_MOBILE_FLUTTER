@@ -58,6 +58,9 @@ class ApiClient {
   static const _forumCacheDuration = Duration(minutes: 1);
   static const _settingsCacheDuration = Duration(minutes: 10);
   static const _maximumCachedReads = 40;
+  static final _uuidIdentifier = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+  );
 
   ApiClient({
     String? baseUrl,
@@ -84,6 +87,10 @@ class ApiClient {
     return resolved.endsWith('/')
         ? resolved.substring(0, resolved.length - 1)
         : resolved;
+  }
+
+  static bool isUuidIdentifier(String value) {
+    return _uuidIdentifier.hasMatch(value.trim());
   }
 
   static const _accessTokenKey = 'comiverse_access_token';
@@ -999,13 +1006,25 @@ class ApiClient {
     return CheckoutStatus.fromJson(data);
   }
 
-  Future<Comic> getComicDetail(String id) async {
-    final json = await _request('GET', '/comics/$id', authorized: false);
+  Future<Comic> getComicDetail(String idOrSlug) async {
+    final identifier = idOrSlug.trim();
+    if (identifier.isEmpty) {
+      throw const ApiException('Comic identifier is required.');
+    }
+    final encodedIdentifier = Uri.encodeComponent(identifier);
+    final path = isUuidIdentifier(identifier)
+        ? '/comics/$encodedIdentifier'
+        : '/v2/comics/$encodedIdentifier';
+    final json = await _request('GET', path, authorized: false);
     final data = _unwrapData(json);
     if (data is! Map<String, dynamic>) {
       throw const ApiException('Cannot read comic detail.');
     }
-    return Comic.fromJson(data);
+    final comic = Comic.fromJson(data);
+    if (comic.id.trim().isEmpty) {
+      throw const ApiException('Comic detail does not contain its ID.');
+    }
+    return comic;
   }
 
   Future<ComicRating> getComicRating(String comicId) async {

@@ -44,6 +44,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
   bool _showFullSummary = false;
   int _tab = 0;
   String? _selectedLanguage; // null = original (no bubble overlay)
+  String? _resolvedComicId;
 
   bool get _canDownloadOffline =>
       widget.apiClient.currentUser?.premiumActive == true;
@@ -51,6 +52,10 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
   @override
   void initState() {
     super.initState();
+    final initialIdentifier = widget.comic.id.trim();
+    if (ApiClient.isUuidIdentifier(initialIdentifier)) {
+      _resolvedComicId = initialIdentifier;
+    }
     _future = _load();
     _restoreReadingLanguage();
   }
@@ -65,26 +70,31 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
   }
 
   Future<_ComicDetailData> _load() async {
-    final results = await Future.wait([
-      widget.apiClient.getComicDetail(widget.comic.id),
-      widget.apiClient.getChapters(widget.comic.id),
+    final detailFuture = widget.apiClient.getComicDetail(widget.comic.id);
+    final comicIdFuture = _resolvedComicId == null
+        ? detailFuture.then(_rememberResolvedComicId)
+        : Future.value(_resolvedComicId!);
+    final results = await Future.wait<Object?>([
+      detailFuture,
+      comicIdFuture.then(widget.apiClient.getChapters),
       if (widget.apiClient.hasToken)
-        widget.apiClient.getReadChapterIds(widget.comic.id)
+        comicIdFuture.then(widget.apiClient.getReadChapterIds)
       else
         Future.value(const <String>{}),
       if (widget.apiClient.hasToken)
-        widget.apiClient.checkSaved(widget.comic.id)
+        comicIdFuture.then(widget.apiClient.checkSaved)
       else
         Future.value(false),
       if (widget.apiClient.hasToken)
-        widget.apiClient.checkLiked(widget.comic.id)
+        comicIdFuture.then(widget.apiClient.checkLiked)
       else
         Future.value(false),
-      _loadRating(),
+      comicIdFuture.then(_loadRating),
     ]);
     _saved = results[3] as bool;
     _liked = results[4] as bool;
     final comic = results[0] as Comic;
+    final comicId = _rememberResolvedComicId(comic);
     final rating =
         (results[5] as ComicRating?) ??
         ComicRating(
@@ -95,9 +105,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
     _rating = rating;
     List<String> languages = const [];
     try {
-      languages = await widget.apiClient.getComicTranslationLanguages(
-        widget.comic.id,
-      );
+      languages = await widget.apiClient.getComicTranslationLanguages(comicId);
     } catch (_) {
       // Non-fatal — the reader just falls back to "Original" only.
     }
@@ -110,10 +118,19 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
     );
   }
 
-  Future<ComicRating?> _loadRating() async {
+  String _rememberResolvedComicId(Comic comic) {
+    final comicId = comic.id.trim();
+    if (comicId.isEmpty) {
+      throw const ApiException('Comic detail does not contain its ID.');
+    }
+    _resolvedComicId = comicId;
+    return comicId;
+  }
+
+  Future<ComicRating?> _loadRating(String comicId) async {
     if (!widget.apiClient.hasToken) return null;
     try {
-      return await widget.apiClient.getComicRating(widget.comic.id);
+      return await widget.apiClient.getComicRating(comicId);
     } catch (_) {
       return null;
     }
@@ -134,10 +151,12 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
 
   Future<void> _toggleSave() async {
     if (!widget.apiClient.hasToken) return _requestSignIn();
+    final comicId = _resolvedComicId;
+    if (comicId == null) return;
     if (_actionBusy) return;
     setState(() => _actionBusy = true);
     try {
-      final saved = await widget.apiClient.toggleSaved(widget.comic.id);
+      final saved = await widget.apiClient.toggleSaved(comicId);
       if (mounted) setState(() => _saved = saved);
     } catch (error) {
       if (!mounted) return;
@@ -149,10 +168,12 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
 
   Future<void> _toggleLike() async {
     if (!widget.apiClient.hasToken) return _requestSignIn();
+    final comicId = _resolvedComicId;
+    if (comicId == null) return;
     if (_actionBusy) return;
     setState(() => _actionBusy = true);
     try {
-      final liked = await widget.apiClient.toggleLiked(widget.comic.id);
+      final liked = await widget.apiClient.toggleLiked(comicId);
       if (mounted) setState(() => _liked = liked);
     } catch (error) {
       if (!mounted) return;
@@ -170,10 +191,12 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
       );
       return;
     }
+    final comicId = _resolvedComicId;
+    if (comicId == null) return;
     if (_ratingBusy) return;
     setState(() => _ratingBusy = true);
     try {
-      final updated = await widget.apiClient.rateComic(widget.comic.id, score);
+      final updated = await widget.apiClient.rateComic(comicId, score);
       if (!mounted) return;
       setState(() => _rating = updated);
       _showMessage(
@@ -193,6 +216,8 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
 
   Future<void> _removeRating() async {
     if (!widget.apiClient.hasToken || _rating?.userScore == null) return;
+    final comicId = _resolvedComicId;
+    if (comicId == null) return;
     final confirmed = await InAppModal.confirm(
       context,
       title: context.tr('Remove your rating?'),
@@ -209,7 +234,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
 
     setState(() => _ratingBusy = true);
     try {
-      final updated = await widget.apiClient.deleteComicRating(widget.comic.id);
+      final updated = await widget.apiClient.deleteComicRating(comicId);
       if (!mounted) return;
       setState(() => _rating = updated);
       _showMessage(
@@ -295,6 +320,10 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
           final data = snapshot.data;
           final comic = data?.comic ?? widget.comic;
           final chapters = data?.chapters ?? const <ChapterLite>[];
+          final canUseComicActions =
+              _resolvedComicId != null &&
+              snapshot.connectionState != ConnectionState.waiting &&
+              !snapshot.hasError;
           final rating =
               _rating ??
               data?.rating ??
@@ -400,7 +429,9 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                               const SizedBox(width: 10),
                               Expanded(
                                 child: OutlinedButton.icon(
-                                  onPressed: _actionBusy ? null : _toggleSave,
+                                  onPressed: _actionBusy || !canUseComicActions
+                                      ? null
+                                      : _toggleSave,
                                   icon: Icon(
                                     _saved
                                         ? Icons.bookmark_rounded
@@ -424,7 +455,9 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                                     : Icons.favorite_outline_rounded,
                                 label: context.tr(_liked ? 'Liked' : 'Like'),
                                 selected: _liked,
-                                onTap: _toggleLike,
+                                onTap: canUseComicActions && !_actionBusy
+                                    ? _toggleLike
+                                    : null,
                               ),
                               _ActionItem(
                                 icon: Icons.share_outlined,
@@ -554,7 +587,7 @@ class _ComicDetailScreenState extends State<ComicDetailScreen> {
                         child: ContentCommentSection(
                           apiClient: widget.apiClient,
                           target: ContentCommentTarget.comic,
-                          targetId: widget.comic.id,
+                          targetId: comic.id,
                         ),
                       ),
                     ),

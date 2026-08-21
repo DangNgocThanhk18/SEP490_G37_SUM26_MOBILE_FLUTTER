@@ -2,6 +2,7 @@ class Comic {
   const Comic({
     required this.id,
     required this.title,
+    this.slug,
     this.summary,
     this.authorName,
     this.cover,
@@ -20,6 +21,7 @@ class Comic {
 
   final String id;
   final String title;
+  final String? slug;
   final String? summary;
   final String? authorName;
   final String? cover;
@@ -44,11 +46,12 @@ class Comic {
     return Comic(
       id: (json['id'] ?? '').toString(),
       title: (json['title'] ?? 'Untitled comic').toString(),
+      slug: _optionalString(json['slug']),
       summary: json['summary']?.toString(),
       authorName: json['authorName']?.toString(),
       cover: json['cover']?.toString(),
       thumbnail: json['thumbnail']?.toString(),
-      status: json['status']?.toString(),
+      status: (json['status'] ?? json['publicationStatus'])?.toString(),
       latestChapterNumber: json['latestChapterNumber']?.toString(),
       viewCount: _asInt(json['viewCount']),
       ratingAverage: _asDouble(json['ratingAverage']),
@@ -73,6 +76,11 @@ class Comic {
     if (value is double) return value;
     if (value is num) return value.toDouble();
     return double.tryParse(value?.toString() ?? '');
+  }
+
+  static String? _optionalString(Object? value) {
+    final text = value?.toString().trim();
+    return text == null || text.isEmpty ? null : text;
   }
 
   static List<String> _parseGenres(Object? value) {

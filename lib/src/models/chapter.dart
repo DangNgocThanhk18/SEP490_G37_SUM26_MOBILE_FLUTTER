@@ -19,6 +19,27 @@ class ChapterLite {
   final bool isPremium;
   final DateTime? createdAt;
 
+  /// Matches both the backend UUID and the SEO route segment
+  /// `chapter-{chapterNumber}` used by the React application.
+  bool matchesRouteIdentifier(String identifier) {
+    final candidate = identifier.trim();
+    if (candidate.isEmpty) return false;
+    if (id == candidate) return true;
+
+    const prefix = 'chapter-';
+    final routeNumber = candidate.toLowerCase().startsWith(prefix)
+        ? candidate.substring(prefix.length)
+        : candidate;
+    final actualNumber = chapterNumber.trim();
+    if (actualNumber == routeNumber) return true;
+
+    final actualNumeric = num.tryParse(actualNumber);
+    final routeNumeric = num.tryParse(routeNumber);
+    return actualNumeric != null &&
+        routeNumeric != null &&
+        actualNumeric == routeNumeric;
+  }
+
   factory ChapterLite.fromJson(Map<String, dynamic> json) {
     final number = (json['chapterNumber'] ?? json['num'] ?? '').toString();
     return ChapterLite(
