@@ -81,10 +81,10 @@ flutter build apk --release --dart-define=API_BASE_URL=https://another-host.exam
 
 ## Screen capture protection
 
-Comic Reader screens enable native screen-capture protection by default. In
-debug and profile builds, Profile > App Settings includes a local switch so a
-team member can temporarily disable protection while presenting through
-`scrcpy`.
+Comic Reader screens enable native screen-capture protection by default. iOS
+always forces protection on and never exposes a user override. In Android debug
+and profile builds, Profile > App Settings includes a local switch so a team
+member can temporarily disable protection while presenting through `scrcpy`.
 
 A normal release build always hides this switch and forces protection on, even
 if the same device previously stored an off value from a demo build:
@@ -93,8 +93,8 @@ if the same device previously stored an off value from a demo build:
 flutter build apk --release
 ```
 
-When the presentation specifically needs release-mode performance, create a
-demo-only APK with the control explicitly enabled:
+When the Android presentation specifically needs release-mode performance,
+create a demo-only APK with the control explicitly enabled:
 
 ```powershell
 flutter build apk --release --dart-define=COMIVERSE_DEMO_CAPTURE_CONTROL=true

@@ -2,10 +2,17 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 abstract final class ScreenCaptureProtection {
-  static const bool canUserConfigure = bool.fromEnvironment(
+  static const bool _demoCaptureControlEnabled = bool.fromEnvironment(
     'COMIVERSE_DEMO_CAPTURE_CONTROL',
     defaultValue: !kReleaseMode,
   );
+
+  /// iOS protection is mandatory. Android keeps the demo override so the team
+  /// can present a debug/profile build through scrcpy.
+  static bool get canUserConfigure =>
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.android &&
+      _demoCaptureControlEnabled;
 
   static const MethodChannel _channel = MethodChannel(
     'comiverse/screen_capture_protection',

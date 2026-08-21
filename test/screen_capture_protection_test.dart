@@ -146,4 +146,26 @@ void main() {
       await ScreenCaptureProtection.release();
     },
   );
+
+  test(
+    'iOS forces protection on and never exposes the demo override',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call);
+            return null;
+          });
+
+      await ScreenCaptureProtection.setUserProtectionEnabled(false);
+      await ScreenCaptureProtection.acquire();
+
+      expect(ScreenCaptureProtection.canUserConfigure, isFalse);
+      expect(ScreenCaptureProtection.isProtectionEnabled, isTrue);
+      expect(calls.where((call) => call.arguments == true), hasLength(1));
+
+      await ScreenCaptureProtection.release();
+    },
+  );
 }

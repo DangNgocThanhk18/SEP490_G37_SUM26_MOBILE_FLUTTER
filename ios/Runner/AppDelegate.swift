@@ -658,8 +658,11 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
   private static let channelName = "comiverse/screen_capture_protection"
   private static let overlayTag = 0x434F4D49
 
-  private var isProtected = false
+  // iOS has no user-facing capture override. Keep protection active for the
+  // entire app so a stale Android/demo preference can never disable it.
+  private var isProtected = true
   private var isAppInactive = false
+  private var securedWindows = Set<ObjectIdentifier>()
 
   static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(
@@ -668,6 +671,10 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
     )
     let instance = ScreenCaptureProtectionPlugin()
     registrar.addMethodCallDelegate(instance, channel: channel)
+    DispatchQueue.main.async {
+      instance.installSecureContainersIfNeeded()
+      instance.updateOverlay()
+    }
   }
 
   override init() {
@@ -712,7 +719,11 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
       return
     }
     DispatchQueue.main.async { [weak self] in
-      self?.isProtected = enabled
+      // The argument is honored by Android. iOS deliberately remains protected
+      // in every build and exposes no switch in Profile settings.
+      _ = enabled
+      self?.isProtected = true
+      self?.installSecureContainersIfNeeded()
       self?.updateOverlay()
       result(nil)
     }
@@ -729,7 +740,32 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
 
   @objc private func appDidBecomeActive() {
     isAppInactive = false
+    installSecureContainersIfNeeded()
     updateOverlay()
+  }
+
+  private func installSecureContainersIfNeeded() {
+    if !Thread.isMainThread {
+      DispatchQueue.main.async { [weak self] in self?.installSecureContainersIfNeeded() }
+      return
+    }
+
+    for window in applicationWindows() where !securedWindows.contains(ObjectIdentifier(window)) {
+      guard let contentView = window.rootViewController?.view,
+            let parent = contentView.superview else {
+        continue
+      }
+
+      let wrapper = SecureScreenshotContainerView(frame: contentView.frame)
+      guard wrapper.isReady else { continue }
+
+      let originalIndex = parent.subviews.firstIndex { $0 === contentView } ?? parent.subviews.count
+      wrapper.autoresizingMask = contentView.autoresizingMask
+      wrapper.backgroundColor = .black
+      wrapper.embed(contentView)
+      parent.insertSubview(wrapper, at: min(originalIndex, parent.subviews.count))
+      securedWindows.insert(ObjectIdentifier(window))
+    }
   }
 
   private func updateOverlay() {
@@ -777,5 +813,73 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
     UIApplication.shared.connectedScenes
       .compactMap { $0 as? UIWindowScene }
       .flatMap { $0.windows }
+      .filter { !$0.isHidden && $0.rootViewController != nil }
+  }
+}
+
+/// UIKit only hides arbitrary view content from screenshots when it is rendered
+/// through a secure text-entry canvas. Apple does not expose that canvas as a
+/// public type, so this is best-effort and the recording/background overlay
+/// above remains the fallback when an iOS version changes its view hierarchy.
+private final class SecureScreenshotContainerView: UIView {
+  private let secureTextField = UITextField(frame: .zero)
+  private var secureCanvas: UIView?
+
+  var isReady: Bool { secureCanvas != nil }
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    configureSecureCanvas()
+  }
+
+  required init?(coder: NSCoder) {
+    super.init(coder: coder)
+    configureSecureCanvas()
+  }
+
+  func embed(_ contentView: UIView) {
+    guard let secureCanvas else { return }
+    contentView.removeFromSuperview()
+    secureCanvas.addSubview(contentView)
+    contentView.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      contentView.leadingAnchor.constraint(equalTo: secureCanvas.leadingAnchor),
+      contentView.trailingAnchor.constraint(equalTo: secureCanvas.trailingAnchor),
+      contentView.topAnchor.constraint(equalTo: secureCanvas.topAnchor),
+      contentView.bottomAnchor.constraint(equalTo: secureCanvas.bottomAnchor),
+    ])
+  }
+
+  private func configureSecureCanvas() {
+    secureTextField.backgroundColor = .clear
+    secureTextField.isUserInteractionEnabled = false
+    secureTextField.isSecureTextEntry = true
+    secureTextField.layoutIfNeeded()
+
+    guard let canvas = findSecureCanvas(in: secureTextField) else { return }
+    canvas.removeFromSuperview()
+    secureCanvas = canvas
+    canvas.translatesAutoresizingMaskIntoConstraints = false
+    canvas.isUserInteractionEnabled = true
+    addSubview(canvas)
+    NSLayoutConstraint.activate([
+      canvas.leadingAnchor.constraint(equalTo: leadingAnchor),
+      canvas.trailingAnchor.constraint(equalTo: trailingAnchor),
+      canvas.topAnchor.constraint(equalTo: topAnchor),
+      canvas.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
+  }
+
+  private func findSecureCanvas(in view: UIView) -> UIView? {
+    for subview in view.subviews {
+      let className = NSStringFromClass(type(of: subview))
+      if className.contains("CanvasView") {
+        return subview
+      }
+      if let nested = findSecureCanvas(in: subview) {
+        return nested
+      }
+    }
+    return nil
   }
 }

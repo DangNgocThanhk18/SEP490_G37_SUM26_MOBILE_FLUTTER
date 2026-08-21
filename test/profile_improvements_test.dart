@@ -8,6 +8,7 @@ import 'package:comiverse_mobile/src/services/api_client.dart';
 import 'package:comiverse_mobile/src/services/profile_image_picker.dart';
 import 'package:comiverse_mobile/src/services/screen_capture_protection.dart';
 import 'package:comiverse_mobile/src/theme/app_theme.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -107,35 +108,69 @@ void main() {
   testWidgets('demo profile exposes the screen capture protection switch', (
     tester,
   ) async {
-    bool? changedValue;
-    await tester.pumpWidget(
-      _testApp(
-        ProfileScreen(
-          apiClient: _ProfileApiClient(),
-          user: _ProfileApiClient.user,
-          isDarkMode: false,
-          onToggleTheme: () {},
-          onOpenHistory: () {},
-          onSignOut: () {},
-          screenCaptureProtectionEnabled: true,
-          onScreenCaptureProtectionChanged: (value) => changedValue = value,
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      bool? changedValue;
+      await tester.pumpWidget(
+        _testApp(
+          ProfileScreen(
+            apiClient: _ProfileApiClient(),
+            user: _ProfileApiClient.user,
+            isDarkMode: false,
+            onToggleTheme: () {},
+            onOpenHistory: () {},
+            onSignOut: () {},
+            screenCaptureProtectionEnabled: true,
+            onScreenCaptureProtectionChanged: (value) => changedValue = value,
+          ),
         ),
-      ),
-    );
+      );
 
-    expect(ScreenCaptureProtection.canUserConfigure, isTrue);
-    final list = find.byKey(const PageStorageKey('profile-scroll'));
-    await tester.drag(list, const Offset(0, -500));
-    await tester.pumpAndSettle();
-    final toggle = find.byKey(const Key('screen-capture-protection-switch'));
-    await tester.ensureVisible(toggle);
+      expect(ScreenCaptureProtection.canUserConfigure, isTrue);
+      final list = find.byKey(const PageStorageKey('profile-scroll'));
+      await tester.drag(list, const Offset(0, -500));
+      await tester.pumpAndSettle();
+      final toggle = find.byKey(const Key('screen-capture-protection-switch'));
+      await tester.ensureVisible(toggle);
 
-    expect(find.text('Screen capture protection'), findsOneWidget);
-    expect(tester.widget<Switch>(toggle).value, isTrue);
-    await tester.tap(toggle);
-    await tester.pump();
+      expect(find.text('Screen capture protection'), findsOneWidget);
+      expect(tester.widget<Switch>(toggle).value, isTrue);
+      await tester.tap(toggle);
+      await tester.pump();
 
-    expect(changedValue, isFalse);
+      expect(changedValue, isFalse);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('iOS profile never exposes the screen capture override', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      await tester.pumpWidget(
+        _testApp(
+          ProfileScreen(
+            apiClient: _ProfileApiClient(),
+            user: _ProfileApiClient.user,
+            isDarkMode: false,
+            onToggleTheme: () {},
+            onOpenHistory: () {},
+            onSignOut: () {},
+            onScreenCaptureProtectionChanged: (_) {},
+          ),
+        ),
+      );
+
+      expect(ScreenCaptureProtection.canUserConfigure, isFalse);
+      expect(
+        find.byKey(const Key('screen-capture-protection-switch')),
+        findsNothing,
+      );
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   testWidgets('profile hides screen capture control without demo callback', (
