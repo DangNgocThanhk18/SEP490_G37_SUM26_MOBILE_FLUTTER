@@ -656,12 +656,10 @@ private struct OfflineSecurityError: LocalizedError {
 
 private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
   private static let channelName = "comiverse/screen_capture_protection"
-  private static let overlayTag = 0x434F4D49
+  private static let legacyOverlayTag = 0x434F4D49
 
-  // iOS has no user-facing capture override. Keep protection active for the
-  // entire app so a stale Android/demo preference can never disable it.
-  private var isProtected = true
-  private var securedWindows = Set<ObjectIdentifier>()
+  private var isProtected = false
+  private var secureContainers = [ObjectIdentifier: SecureScreenshotContainerView]()
 
   static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(
@@ -671,19 +669,14 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
     let instance = ScreenCaptureProtectionPlugin()
     registrar.addMethodCallDelegate(instance, channel: channel)
     DispatchQueue.main.async {
+      instance.removeLegacyPrivacyOverlays()
       instance.installSecureContainersIfNeeded()
-      instance.updatePrivacyOverlayForCurrentState()
+      instance.updateSecureContainerState()
     }
   }
 
   override init() {
     super.init()
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(appWillResignActive),
-      name: UIApplication.willResignActiveNotification,
-      object: nil
-    )
     NotificationCenter.default.addObserver(
       self,
       selector: #selector(appDidBecomeActive),
@@ -712,25 +705,20 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
       return
     }
     DispatchQueue.main.async { [weak self] in
-      // The argument is honored by Android. iOS deliberately remains protected
-      // in every build and exposes no switch in Profile settings.
-      _ = enabled
-      self?.isProtected = true
+      // iOS exposes no user override. This value only follows Reader lifecycle:
+      // true while at least one Reader is open, false after the last one closes.
+      self?.isProtected = enabled
+      self?.removeLegacyPrivacyOverlays()
       self?.installSecureContainersIfNeeded()
-      self?.updatePrivacyOverlayForCurrentState()
+      self?.updateSecureContainerState()
       result(nil)
     }
   }
 
-  @objc private func appWillResignActive() {
-    setPrivacyOverlayVisible(isProtected)
-  }
-
   @objc private func appDidBecomeActive() {
+    removeLegacyPrivacyOverlays()
     installSecureContainersIfNeeded()
-    // Remove this unconditionally. Capture/mirroring can remain active after
-    // returning to the app and must never trap the user behind the overlay.
-    setPrivacyOverlayVisible(false)
+    updateSecureContainerState()
   }
 
   private func installSecureContainersIfNeeded() {
@@ -739,7 +727,9 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
       return
     }
 
-    for window in applicationWindows() where !securedWindows.contains(ObjectIdentifier(window)) {
+    for window in applicationWindows() {
+      let windowIdentifier = ObjectIdentifier(window)
+      guard secureContainers[windowIdentifier] == nil else { continue }
       guard let contentView = window.rootViewController?.view,
             let parent = contentView.superview else {
         continue
@@ -752,47 +742,35 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
       wrapper.autoresizingMask = contentView.autoresizingMask
       wrapper.backgroundColor = .black
       wrapper.embed(contentView)
+      wrapper.setProtected(isProtected)
       parent.insertSubview(wrapper, at: min(originalIndex, parent.subviews.count))
-      securedWindows.insert(ObjectIdentifier(window))
+      secureContainers[windowIdentifier] = wrapper
     }
   }
 
-  private func updatePrivacyOverlayForCurrentState() {
+  private func updateSecureContainerState() {
     if !Thread.isMainThread {
       DispatchQueue.main.async { [weak self] in
-        self?.updatePrivacyOverlayForCurrentState()
+        self?.updateSecureContainerState()
       }
       return
     }
 
-    let shouldCover = isProtected && UIApplication.shared.applicationState != .active
-    setPrivacyOverlayVisible(shouldCover)
+    secureContainers.values.forEach { $0.setProtected(isProtected) }
   }
 
-  private func setPrivacyOverlayVisible(_ visible: Bool) {
+  private func removeLegacyPrivacyOverlays() {
     if !Thread.isMainThread {
       DispatchQueue.main.async { [weak self] in
-        self?.setPrivacyOverlayVisible(visible)
+        self?.removeLegacyPrivacyOverlays()
       }
       return
     }
 
     for window in applicationWindows() {
-      updatePrivacyOverlay(in: window, visible: visible)
-    }
-  }
-
-  private func updatePrivacyOverlay(in window: UIWindow, visible: Bool) {
-    if visible {
-      guard window.viewWithTag(Self.overlayTag) == nil else { return }
-      let overlay = UIView(frame: window.bounds)
-      overlay.tag = Self.overlayTag
-      overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-      overlay.backgroundColor = .black
-      overlay.isUserInteractionEnabled = false
-      window.addSubview(overlay)
-    } else {
-      window.viewWithTag(Self.overlayTag)?.removeFromSuperview()
+      window.subviews
+        .filter { $0.tag == Self.legacyOverlayTag }
+        .forEach { $0.removeFromSuperview() }
     }
   }
 
@@ -806,8 +784,8 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
 
 /// UIKit only hides arbitrary view content from screenshots when it is rendered
 /// through a secure text-entry canvas. Apple does not expose that canvas as a
-/// public type, so this is best-effort. The separate overlay above protects only
-/// the app-switcher snapshot and never blocks the active interface.
+/// public type, so this is best-effort. No full-screen overlay is used because
+/// capture and lifecycle callbacks must never block the active interface.
 private final class SecureScreenshotContainerView: UIView {
   private let secureTextField = UITextField(frame: .zero)
   private var secureCanvas: UIView?
@@ -837,6 +815,10 @@ private final class SecureScreenshotContainerView: UIView {
     ])
   }
 
+  func setProtected(_ enabled: Bool) {
+    secureTextField.isSecureTextEntry = enabled
+  }
+
   private func configureSecureCanvas() {
     secureTextField.backgroundColor = .clear
     secureTextField.isUserInteractionEnabled = false
@@ -855,6 +837,7 @@ private final class SecureScreenshotContainerView: UIView {
       canvas.topAnchor.constraint(equalTo: topAnchor),
       canvas.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
+    setProtected(false)
   }
 
   private func findSecureCanvas(in view: UIView) -> UIView? {

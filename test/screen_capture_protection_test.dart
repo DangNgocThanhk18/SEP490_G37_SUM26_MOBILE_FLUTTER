@@ -166,6 +166,7 @@ void main() {
       expect(calls.where((call) => call.arguments == true), hasLength(1));
 
       await ScreenCaptureProtection.release();
+      expect(calls.map((call) => call.arguments), <Object?>[true, false]);
     },
   );
 }

@@ -82,11 +82,11 @@ flutter build apk --release --dart-define=API_BASE_URL=https://another-host.exam
 ## Screen capture protection
 
 Comic Reader screens enable native screen-capture protection by default. iOS
-always forces protection on and never exposes a user override. In Android debug
-and profile builds, Profile > App Settings includes a local switch so a team
-member can temporarily disable protection while presenting through `scrcpy`.
-On iOS, protected capture output does not cover the interface being used; the
-black privacy overlay is limited to the app-switcher snapshot while inactive.
+automatically protects Reader content, releases protection when Reader closes,
+and never exposes a user override. In Android debug and profile builds, Profile
+> App Settings includes a local switch so a team member can temporarily disable
+protection while presenting through `scrcpy`. No iOS full-screen lifecycle
+overlay is added, so capture cannot block navigation outside Reader.
 
 A normal release build always hides this switch and forces protection on, even
 if the same device previously stored an off value from a demo build:
