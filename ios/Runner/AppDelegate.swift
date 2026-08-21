@@ -661,7 +661,6 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
   // iOS has no user-facing capture override. Keep protection active for the
   // entire app so a stale Android/demo preference can never disable it.
   private var isProtected = true
-  private var isAppInactive = false
   private var securedWindows = Set<ObjectIdentifier>()
 
   static func register(with registrar: FlutterPluginRegistrar) {
@@ -673,18 +672,12 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
     registrar.addMethodCallDelegate(instance, channel: channel)
     DispatchQueue.main.async {
       instance.installSecureContainersIfNeeded()
-      instance.updateOverlay()
+      instance.updatePrivacyOverlayForCurrentState()
     }
   }
 
   override init() {
     super.init()
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(captureStateDidChange),
-      name: UIScreen.capturedDidChangeNotification,
-      object: nil
-    )
     NotificationCenter.default.addObserver(
       self,
       selector: #selector(appWillResignActive),
@@ -724,24 +717,20 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
       _ = enabled
       self?.isProtected = true
       self?.installSecureContainersIfNeeded()
-      self?.updateOverlay()
+      self?.updatePrivacyOverlayForCurrentState()
       result(nil)
     }
   }
 
-  @objc private func captureStateDidChange() {
-    updateOverlay()
-  }
-
   @objc private func appWillResignActive() {
-    isAppInactive = true
-    updateOverlay()
+    setPrivacyOverlayVisible(isProtected)
   }
 
   @objc private func appDidBecomeActive() {
-    isAppInactive = false
     installSecureContainersIfNeeded()
-    updateOverlay()
+    // Remove this unconditionally. Capture/mirroring can remain active after
+    // returning to the app and must never trap the user behind the overlay.
+    setPrivacyOverlayVisible(false)
   }
 
   private func installSecureContainersIfNeeded() {
@@ -768,41 +757,39 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
     }
   }
 
-  private func updateOverlay() {
+  private func updatePrivacyOverlayForCurrentState() {
     if !Thread.isMainThread {
-      DispatchQueue.main.async { [weak self] in self?.updateOverlay() }
+      DispatchQueue.main.async { [weak self] in
+        self?.updatePrivacyOverlayForCurrentState()
+      }
       return
     }
 
-    let shouldCover = isProtected && (isAppInactive || UIScreen.main.isCaptured)
+    let shouldCover = isProtected && UIApplication.shared.applicationState != .active
+    setPrivacyOverlayVisible(shouldCover)
+  }
+
+  private func setPrivacyOverlayVisible(_ visible: Bool) {
+    if !Thread.isMainThread {
+      DispatchQueue.main.async { [weak self] in
+        self?.setPrivacyOverlayVisible(visible)
+      }
+      return
+    }
+
     for window in applicationWindows() {
-      updateOverlay(in: window, shouldCover: shouldCover)
+      updatePrivacyOverlay(in: window, visible: visible)
     }
   }
 
-  private func updateOverlay(in window: UIWindow, shouldCover: Bool) {
-    if shouldCover {
+  private func updatePrivacyOverlay(in window: UIWindow, visible: Bool) {
+    if visible {
       guard window.viewWithTag(Self.overlayTag) == nil else { return }
       let overlay = UIView(frame: window.bounds)
       overlay.tag = Self.overlayTag
       overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
       overlay.backgroundColor = .black
       overlay.isUserInteractionEnabled = false
-
-      let label = UILabel()
-      label.translatesAutoresizingMaskIntoConstraints = false
-      label.text = "Screen capture is disabled for copyrighted content."
-      label.textColor = .white
-      label.textAlignment = .center
-      label.numberOfLines = 0
-      label.font = .preferredFont(forTextStyle: .headline)
-      overlay.addSubview(label)
-      NSLayoutConstraint.activate([
-        label.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
-        label.centerYAnchor.constraint(equalTo: overlay.centerYAnchor),
-        label.leadingAnchor.constraint(greaterThanOrEqualTo: overlay.leadingAnchor, constant: 32),
-        label.trailingAnchor.constraint(lessThanOrEqualTo: overlay.trailingAnchor, constant: -32),
-      ])
       window.addSubview(overlay)
     } else {
       window.viewWithTag(Self.overlayTag)?.removeFromSuperview()
@@ -819,8 +806,8 @@ private final class ScreenCaptureProtectionPlugin: NSObject, FlutterPlugin {
 
 /// UIKit only hides arbitrary view content from screenshots when it is rendered
 /// through a secure text-entry canvas. Apple does not expose that canvas as a
-/// public type, so this is best-effort and the recording/background overlay
-/// above remains the fallback when an iOS version changes its view hierarchy.
+/// public type, so this is best-effort. The separate overlay above protects only
+/// the app-switcher snapshot and never blocks the active interface.
 private final class SecureScreenshotContainerView: UIView {
   private let secureTextField = UITextField(frame: .zero)
   private var secureCanvas: UIView?

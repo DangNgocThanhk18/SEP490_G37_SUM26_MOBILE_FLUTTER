@@ -85,6 +85,8 @@ Comic Reader screens enable native screen-capture protection by default. iOS
 always forces protection on and never exposes a user override. In Android debug
 and profile builds, Profile > App Settings includes a local switch so a team
 member can temporarily disable protection while presenting through `scrcpy`.
+On iOS, protected capture output does not cover the interface being used; the
+black privacy overlay is limited to the app-switcher snapshot while inactive.
 
 A normal release build always hides this switch and forces protection on, even
 if the same device previously stored an off value from a demo build:
