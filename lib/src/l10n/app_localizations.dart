@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
+import '../services/api_client.dart';
+
 class AppLocalizations {
   const AppLocalizations(this.locale);
 
@@ -24,6 +26,60 @@ class AppLocalizations {
     }
     return value;
   }
+
+  String errorMessage(Object error) {
+    if (error is ApiException) {
+      switch (error.code) {
+        case ApiException.networkUnavailableCode:
+          return tr(
+            'No internet connection. Check your network and try again.',
+          );
+        case ApiException.requestTimeoutCode:
+          return tr('The connection timed out. Please try again.');
+        case ApiException.invalidResponseCode:
+          return tr(
+            'The server returned an invalid response. Please try again later.',
+          );
+      }
+      final statusCode = error.statusCode;
+      if (statusCode != null && statusCode >= 500) {
+        return tr(
+          'The server is temporarily unavailable. Please try again later.',
+        );
+      }
+      if (statusCode == 429) {
+        return tr('Too many requests. Please wait and try again.');
+      }
+    }
+
+    final message = error.toString().trim();
+    if (_looksLikeConnectionFailure(message)) {
+      return tr('No internet connection. Check your network and try again.');
+    }
+    if (_containsTechnicalLocation(message)) {
+      return tr('Something went wrong. Please try again.');
+    }
+    return tr(
+      message.isEmpty ? 'Something went wrong. Please try again.' : message,
+    );
+  }
+
+  static bool _looksLikeConnectionFailure(String message) {
+    final normalized = message.toLowerCase();
+    return normalized.contains('cannot connect to backend') ||
+        normalized.contains('clientexception') ||
+        normalized.contains('socketexception') ||
+        normalized.contains('failed host lookup') ||
+        normalized.contains('connection refused') ||
+        normalized.contains('network is unreachable');
+  }
+
+  static bool _containsTechnicalLocation(String message) {
+    return RegExp(
+      r'(https?|wss?)://[^\s]+',
+      caseSensitive: false,
+    ).hasMatch(message);
+  }
 }
 
 extension AppLocalizationContext on BuildContext {
@@ -33,27 +89,7 @@ extension AppLocalizationContext on BuildContext {
       l10n.tr(key, values: values);
 
   String localizedError(Object error) {
-    final message = error.toString();
-    const connectPrefix =
-        'Cannot connect to backend. Check that Spring Boot is running at ';
-    if (message.startsWith(connectPrefix) && message.endsWith('.')) {
-      return tr(
-        'Cannot connect to backend. Check that Spring Boot is running at {url}.',
-        values: {
-          'url': message.substring(connectPrefix.length, message.length - 1),
-        },
-      );
-    }
-    const timeoutPrefix = 'Request timed out while connecting to ';
-    if (message.startsWith(timeoutPrefix) && message.endsWith('.')) {
-      return tr(
-        'Request timed out while connecting to {url}.',
-        values: {
-          'url': message.substring(timeoutPrefix.length, message.length - 1),
-        },
-      );
-    }
-    return tr(message);
+    return l10n.errorMessage(error);
   }
 }
 
@@ -121,8 +157,8 @@ const Map<String, String> _vietnamese = {
   'Back to top': 'Lên đầu trang',
   'BEST VALUE': 'GIÁ TỐT NHẤT',
   'Cancel': 'Hủy',
-  'Cannot connect to backend. Check that Spring Boot is running at {url}.':
-      'Không thể kết nối máy chủ. Hãy kiểm tra Spring Boot đang chạy tại {url}.',
+  'No internet connection. Check your network and try again.':
+      'Không có kết nối Internet. Hãy kiểm tra mạng và thử lại.',
   'Cannot read chapter detail.': 'Không thể đọc chi tiết chương.',
   'Cannot read comic detail.': 'Không thể đọc chi tiết truyện.',
   'Cannot read discussion thread.': 'Không thể đọc cuộc thảo luận.',
@@ -364,8 +400,15 @@ const Map<String, String> _vietnamese = {
   'Removed from library.': 'Đã xóa khỏi thư viện.',
   'Retry': 'Thử lại',
   'Request failed': 'Yêu cầu thất bại',
-  'Request timed out while connecting to {url}.':
-      'Yêu cầu kết nối đến {url} đã hết thời gian chờ.',
+  'The connection timed out. Please try again.':
+      'Kết nối mất quá nhiều thời gian. Vui lòng thử lại.',
+  'The server returned an invalid response. Please try again later.':
+      'Máy chủ trả về dữ liệu không hợp lệ. Vui lòng thử lại sau.',
+  'The server is temporarily unavailable. Please try again later.':
+      'Máy chủ đang tạm thời gián đoạn. Vui lòng thử lại sau.',
+  'Too many requests. Please wait and try again.':
+      'Bạn thao tác quá nhanh. Vui lòng chờ rồi thử lại.',
+  'Something went wrong. Please try again.': 'Đã xảy ra lỗi. Vui lòng thử lại.',
   'Save': 'Lưu',
   'Saved': 'Đã lưu',
   'Search comics, authors, genres...': 'Tìm truyện, tác giả, thể loại...',

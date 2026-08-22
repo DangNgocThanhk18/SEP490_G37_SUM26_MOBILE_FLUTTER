@@ -22,6 +22,10 @@ import 'session_storage.dart';
 class ApiException implements Exception {
   const ApiException(this.message, {this.statusCode, this.code});
 
+  static const networkUnavailableCode = 'NETWORK_UNAVAILABLE';
+  static const requestTimeoutCode = 'REQUEST_TIMEOUT';
+  static const invalidResponseCode = 'INVALID_RESPONSE';
+
   final String message;
   final int? statusCode;
   final String? code;
@@ -534,7 +538,13 @@ class ApiClient {
             ? (decoded['message'] ?? decoded['error'] ?? 'Image upload failed')
                   .toString()
             : 'Image upload failed';
-        throw ApiException(message);
+        throw ApiException(
+          message,
+          statusCode: response.statusCode,
+          code: decoded is Map<String, dynamic>
+              ? decoded['code']?.toString()
+              : null,
+        );
       }
 
       if (decoded is Map<String, dynamic>) {
@@ -542,14 +552,12 @@ class ApiClient {
         if (data is String && data.trim().isNotEmpty) return data.trim();
       }
       throw const ApiException('Cannot read uploaded image response.');
-    } on http.ClientException {
-      throw ApiException(
-        'Cannot connect to backend. Check that Spring Boot is running at $baseUrl.',
-      );
-    } on TimeoutException {
-      throw ApiException('Request timed out while connecting to $baseUrl.');
-    } on FormatException {
-      throw const ApiException('Backend returned invalid JSON.');
+    } on http.ClientException catch (error, stackTrace) {
+      throw _networkUnavailable(error, stackTrace);
+    } on TimeoutException catch (error, stackTrace) {
+      throw _requestTimedOut(error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      throw _invalidResponse(error, stackTrace);
     }
   }
 
@@ -1413,12 +1421,10 @@ class ApiClient {
           },
         ),
       );
-    } on http.ClientException {
-      throw ApiException(
-        'Cannot connect to backend. Check that Spring Boot is running at $baseUrl.',
-      );
-    } on TimeoutException {
-      throw ApiException('Request timed out while connecting to $baseUrl.');
+    } on http.ClientException catch (error, stackTrace) {
+      throw _networkUnavailable(error, stackTrace);
+    } on TimeoutException catch (error, stackTrace) {
+      throw _requestTimedOut(error, stackTrace);
     }
   }
 
@@ -1505,15 +1511,47 @@ class ApiClient {
         return decoded;
       }
       throw const ApiException('Unexpected backend response.');
-    } on http.ClientException {
-      throw ApiException(
-        'Cannot connect to backend. Check that Spring Boot is running at $baseUrl.',
-      );
-    } on TimeoutException {
-      throw ApiException('Request timed out while connecting to $baseUrl.');
-    } on FormatException {
-      throw const ApiException('Backend returned invalid JSON.');
+    } on http.ClientException catch (error, stackTrace) {
+      throw _networkUnavailable(error, stackTrace);
+    } on TimeoutException catch (error, stackTrace) {
+      throw _requestTimedOut(error, stackTrace);
+    } on FormatException catch (error, stackTrace) {
+      throw _invalidResponse(error, stackTrace);
     }
+  }
+
+  ApiException _networkUnavailable(Object error, StackTrace stackTrace) {
+    _debugTransportFailure('network', error, stackTrace);
+    return const ApiException(
+      'No internet connection. Check your network and try again.',
+      code: ApiException.networkUnavailableCode,
+    );
+  }
+
+  ApiException _requestTimedOut(Object error, StackTrace stackTrace) {
+    _debugTransportFailure('timeout', error, stackTrace);
+    return const ApiException(
+      'The connection timed out. Please try again.',
+      code: ApiException.requestTimeoutCode,
+    );
+  }
+
+  ApiException _invalidResponse(Object error, StackTrace stackTrace) {
+    _debugTransportFailure('invalid-response', error, stackTrace);
+    return const ApiException(
+      'The server returned an invalid response. Please try again later.',
+      code: ApiException.invalidResponseCode,
+    );
+  }
+
+  void _debugTransportFailure(
+    String kind,
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    if (!kDebugMode) return;
+    debugPrint('API $kind failure for $baseUrl: $error');
+    debugPrintStack(stackTrace: stackTrace);
   }
 
   Future<bool> _refreshAccessToken() {
